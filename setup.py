@@ -1,13 +1,11 @@
 from setuptools import find_packages, setup
 
-# First update the version in loompy/_version.py, then:
+# First update the version in shoji/_version.py, then:
 
-# cd ~/code/loompy  (the directory where loompy resides)
+# cd ~/shoji  (the directory where shoji resides)
 # rm -r dist   (otherwise twine will upload the oldest build!)
 # python setup.py sdist
 # twine upload dist/*
-
-# NOTE: Don't forget to update the release version at loompy.github.io (index.html)!
 
 # pylint: disable=exec-used
 __version__ = '0.0.0'
