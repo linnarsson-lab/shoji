@@ -19,13 +19,7 @@ setup(
 	packages=find_packages(),
 	python_requires='>=3.6',
 	install_requires=[
-		'blosc',
-		'numcodecs'
 	],
-	# entry_points='''
-	# 	[console_scripts]
-	# 	loompy=loompy.commands:cli
-	# ''',
 	# metadata for upload to PyPI
 	author="Linnarsson Lab",
 	author_email="sten.linnarsson@ki.se",
