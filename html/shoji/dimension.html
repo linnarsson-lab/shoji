@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
+<meta name="generator" content="pdoc 0.8.1" />
+<title>shoji.dimension API documentation</title>
+<meta name="description" content="Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
+constrained to have the same number of elements along that …" />
+<link href='https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.0/normalize.min.css' rel='stylesheet'>
+<link href='https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/8.0.0/sanitize.min.css' rel='stylesheet'>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
+<style>.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:30px;overflow:hidden}#sidebar > *:last-child{margin-bottom:2cm}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:1em 0 .50em 0}h3{font-size:1.4em;margin:25px 0 10px 0}h4{margin:0;font-size:105%}a{color:#058;text-decoration:none;transition:color .3s ease-in-out}a:hover{color:#e82}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900}pre code{background:#f8f8f8;font-size:.8em;line-height:1.4em}code{background:#f2f2f1;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{background:#f8f8f8;border:0;border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0;padding:1ex}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{margin-top:.6em;font-weight:bold}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-weight:bold;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}.admonition{padding:.1em .5em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
+<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%;height:100vh;overflow:auto;position:sticky;top:0}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.item .name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul{padding-left:1.5em}.toc > ul > li{margin-top:.5em}}</style>
+<style media="print">@media print{#sidebar h1{page-break-before:always}.source{display:none}}@media print{*{background:transparent !important;color:#000 !important;box-shadow:none !important;text-shadow:none !important}a[href]:after{content:" (" attr(href) ")";font-size:90%}a[href][title]:after{content:none}abbr[title]:after{content:" (" attr(title) ")"}.ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:""}pre,blockquote{border:1px solid #999;page-break-inside:avoid}thead{display:table-header-group}tr,img{page-break-inside:avoid}img{max-width:100% !important}@page{margin:0.5cm}p,h2,h3{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{page-break-after:avoid}}</style>
+</head>
+<body>
+<main>
+<article id="content">
+<header>
+<h1 class="title">Module <code>shoji.dimension</code></h1>
+</header>
+<section id="section-intro">
+<p>Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
+constrained to have the same number of elements along that axis. </p>
+<h2 id="adding-data-along-a-dimension">Adding data along a dimension</h2>
+<p>In order to ensure that the dimension constraints are always fulfilled, data must be added
+in parallel to all tensors that share a dimension, using the <code>append()</code> method. For example,
+to add samples to a project with a <code>samples</code> dimension:</p>
+<pre><code class="python">ws = db.cancer_project
+ws.samples.append({
+        &quot;SampleID&quot;: np.array([1, 2, 3, 4]),
+        &quot;SampleName&quot;: np.array([&quot;Sample 1&quot;, &quot;Sample 2&quot;, &quot;Sample 3&quot;, &quot;Sample 4&quot;]),
+        &quot;Age&quot;: np.array([10, 23, 21, 24]),
+        &quot;Description&quot;: np.array([&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;])
+})
+</code></pre>
+<p>Note that if you leave out one of the tensors (of the ones that have <code>"samples"</code> as their first
+dimension), or supply data of inconsistent shape, the append method will raise an exception.</p>
+<p>Appending data using this method is guaranteed to either succeed or fail completely, and will never
+leave the database in an inconsistent state (e.g. with data appended to only one of the tensors).</p>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">&#34;&#34;&#34;
+Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
+constrained to have the same number of elements along that axis. 
+
+## Adding data along a dimension
+
+In order to ensure that the dimension constraints are always fulfilled, data must be added
+in parallel to all tensors that share a dimension, using the `append()` method. For example, 
+to add samples to a project with a `samples` dimension:
+
+```python
+ws = db.cancer_project
+ws.samples.append({
+        &#34;SampleID&#34;: np.array([1, 2, 3, 4]),
+        &#34;SampleName&#34;: np.array([&#34;Sample 1&#34;, &#34;Sample 2&#34;, &#34;Sample 3&#34;, &#34;Sample 4&#34;]),
+        &#34;Age&#34;: np.array([10, 23, 21, 24]),
+        &#34;Description&#34;: np.array([&#34;&#34;, &#34;&#34;, &#34;&#34;, &#34;&#34;])
+})
+```
+
+Note that if you leave out one of the tensors (of the ones that have `&#34;samples&#34;` as their first
+dimension), or supply data of inconsistent shape, the append method will raise an exception.
+
+Appending data using this method is guaranteed to either succeed or fail completely, and will never
+leave the database in an inconsistent state (e.g. with data appended to only one of the tensors).
+&#34;&#34;&#34;
+from typing import Optional, Dict
+import numpy as np
+import shoji
+
+
+class Dimension:
+        &#34;&#34;&#34;
+        Class representing a named dimension, which can be shared by multiple `shoji.tensor.Tensor`s
+        &#34;&#34;&#34;
+        def __init__(self, *, size: Optional[int]) -&gt; None:
+                if size == -1:
+                        size = None
+                if size is not None and size &lt; 0:
+                        raise ValueError(&#34;Length must be non-negative&#34;)
+                self.size = size  # None means variable length (i.e. can append) or jagged
+
+                self.assigned_name = &#34;&#34;  # Will be set if the Dimension is read from the db
+                self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
+
+        def __repr__(self) -&gt; str:
+                if self.size is None:
+                        return &#34;&lt;Dimension of variable size&gt;&#34;
+                else:
+                        return f&#34;&lt;Dimension of {self.size} size&gt;&#34;
+
+        def append(self, vals: Dict[str, np.ndarray]) -&gt; None:
+                &#34;&#34;&#34;
+                Append values to all tensors that have this as their first dimension
+
+                Args:
+                        vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
+
+                Remarks:
+                        The method is transactional, i.e. it&#39;s guaranteed to either succeed or
+                        fail completely, and will not leave the database in an inconsistent state.
+                &#34;&#34;&#34;
+                assert self.wsm is not None, &#34;Cannot append to unsaved dimension&#34;
+                shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.assigned_name, vals)</code></pre>
+</details>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+<h2 class="section-title" id="header-classes">Classes</h2>
+<dl>
+<dt id="shoji.dimension.Dimension"><code class="flex name class">
+<span>class <span class="ident">Dimension</span></span>
+<span>(</span><span>*, size: Union[int, NoneType])</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Class representing a named dimension, which can be shared by multiple <code><a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a></code>s</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class Dimension:
+        &#34;&#34;&#34;
+        Class representing a named dimension, which can be shared by multiple `shoji.tensor.Tensor`s
+        &#34;&#34;&#34;
+        def __init__(self, *, size: Optional[int]) -&gt; None:
+                if size == -1:
+                        size = None
+                if size is not None and size &lt; 0:
+                        raise ValueError(&#34;Length must be non-negative&#34;)
+                self.size = size  # None means variable length (i.e. can append) or jagged
+
+                self.assigned_name = &#34;&#34;  # Will be set if the Dimension is read from the db
+                self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
+
+        def __repr__(self) -&gt; str:
+                if self.size is None:
+                        return &#34;&lt;Dimension of variable size&gt;&#34;
+                else:
+                        return f&#34;&lt;Dimension of {self.size} size&gt;&#34;
+
+        def append(self, vals: Dict[str, np.ndarray]) -&gt; None:
+                &#34;&#34;&#34;
+                Append values to all tensors that have this as their first dimension
+
+                Args:
+                        vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
+
+                Remarks:
+                        The method is transactional, i.e. it&#39;s guaranteed to either succeed or
+                        fail completely, and will not leave the database in an inconsistent state.
+                &#34;&#34;&#34;
+                assert self.wsm is not None, &#34;Cannot append to unsaved dimension&#34;
+                shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.assigned_name, vals)</code></pre>
+</details>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.dimension.Dimension.append"><code class="name flex">
+<span>def <span class="ident">append</span></span>(<span>self, vals: Dict[str, numpy.ndarray]) -> NoneType</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Append values to all tensors that have this as their first dimension</p>
+<h2 id="args">Args</h2>
+<dl>
+<dt><strong><code>vals</code></strong></dt>
+<dd>Dict mapping tensor names (<code>str</code>) to tensor values (<code>np.ndarray</code>)</dd>
+</dl>
+<h2 id="remarks">Remarks</h2>
+<p>The method is transactional, i.e. it's guaranteed to either succeed or
+fail completely, and will not leave the database in an inconsistent state.</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def append(self, vals: Dict[str, np.ndarray]) -&gt; None:
+        &#34;&#34;&#34;
+        Append values to all tensors that have this as their first dimension
+
+        Args:
+                vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
+
+        Remarks:
+                The method is transactional, i.e. it&#39;s guaranteed to either succeed or
+                fail completely, and will not leave the database in an inconsistent state.
+        &#34;&#34;&#34;
+        assert self.wsm is not None, &#34;Cannot append to unsaved dimension&#34;
+        shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.assigned_name, vals)</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+</dl>
+</section>
+</article>
+<nav id="sidebar">
+<h1>Index</h1>
+<div class="toc">
+<ul>
+<li><a href="#adding-data-along-a-dimension">Adding data along a dimension</a></li>
+</ul>
+</div>
+<ul id="index">
+<li><h3>Super-module</h3>
+<ul>
+<li><code><a title="shoji" href="index.html">shoji</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-classes">Classes</a></h3>
+<ul>
+<li>
+<h4><code><a title="shoji.dimension.Dimension" href="#shoji.dimension.Dimension">Dimension</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.dimension.Dimension.append" href="#shoji.dimension.Dimension.append">append</a></code></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+</main>
+<footer id="footer">
+<p>Generated by <a href="https://pdoc3.github.io/pdoc"><cite>pdoc</cite> 0.8.1</a>.</p>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad()</script>
+</body>
+</html>

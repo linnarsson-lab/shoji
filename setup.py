@@ -11,26 +11,27 @@ from setuptools import find_packages, setup
 
 # pylint: disable=exec-used
 __version__ = '0.0.0'
-exec(open('doompy/_version.py').read())
+exec(open('shoji/_version.py').read())
 
 setup(
-	name="doompy",
+	name="shoji",
 	version=__version__,
 	packages=find_packages(),
 	python_requires='>=3.6',
 	install_requires=[
-
+		'blosc',
+		'numcodecs'
 	],
-	entry_points='''
-		[console_scripts]
-		loompy=loompy.commands:cli
-	''',
+	# entry_points='''
+	# 	[console_scripts]
+	# 	loompy=loompy.commands:cli
+	# ''',
 	# metadata for upload to PyPI
 	author="Linnarsson Lab",
 	author_email="sten.linnarsson@ki.se",
-	description="Python API for doom, a database for omics",
+	description="Python API for shoji, a tensor database",
 	license="BSD",
-	keywords="doom omics transcriptomics bioinformatics",
-	url="https://github.com/linnarsson-lab/doompy",
-	download_url=f"https://github.com/linnarsson-lab/doompy/archive/{__version__}.tar.gz",
+	keywords="shoji tensor omics transcriptomics bioinformatics microscopy",
+	url="https://github.com/linnarsson-lab/shoji",
+	download_url=f"https://github.com/linnarsson-lab/shoji/archive/{__version__}.tar.gz",
 )

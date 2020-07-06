@@ -1,4 +1,4 @@
 
 
-# doompy v0.1
+# shoji v0.1
 

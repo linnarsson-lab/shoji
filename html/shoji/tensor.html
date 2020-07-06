@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
+<meta name="generator" content="pdoc 0.8.1" />
+<title>shoji.tensor API documentation</title>
+<meta name="description" content="Tensors, representing multidimensional arrays of numbers or strings." />
+<link href='https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.0/normalize.min.css' rel='stylesheet'>
+<link href='https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/8.0.0/sanitize.min.css' rel='stylesheet'>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
+<style>.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:30px;overflow:hidden}#sidebar > *:last-child{margin-bottom:2cm}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:1em 0 .50em 0}h3{font-size:1.4em;margin:25px 0 10px 0}h4{margin:0;font-size:105%}a{color:#058;text-decoration:none;transition:color .3s ease-in-out}a:hover{color:#e82}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900}pre code{background:#f8f8f8;font-size:.8em;line-height:1.4em}code{background:#f2f2f1;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{background:#f8f8f8;border:0;border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0;padding:1ex}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{margin-top:.6em;font-weight:bold}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-weight:bold;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}.admonition{padding:.1em .5em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
+<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%;height:100vh;overflow:auto;position:sticky;top:0}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.item .name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul{padding-left:1.5em}.toc > ul > li{margin-top:.5em}}</style>
+<style media="print">@media print{#sidebar h1{page-break-before:always}.source{display:none}}@media print{*{background:transparent !important;color:#000 !important;box-shadow:none !important;text-shadow:none !important}a[href]:after{content:" (" attr(href) ")";font-size:90%}a[href][title]:after{content:none}abbr[title]:after{content:" (" attr(title) ")"}.ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:""}pre,blockquote{border:1px solid #999;page-break-inside:avoid}thead{display:table-header-group}tr,img{page-break-inside:avoid}img{max-width:100% !important}@page{margin:0.5cm}p,h2,h3{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{page-break-after:avoid}}</style>
+</head>
+<body>
+<main>
+<article id="content">
+<header>
+<h1 class="title">Module <code>shoji.tensor</code></h1>
+</header>
+<section id="section-intro">
+<p>Tensors, representing multidimensional arrays of numbers or strings.</p>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">&#34;&#34;&#34;
+Tensors, representing multidimensional arrays of numbers or strings.
+&#34;&#34;&#34;
+from typing import Tuple, Union, List, Optional, Callable
+import numpy as np
+import shoji
+
+
+class Tensor:
+        valid_types = (&#34;bool&#34;, &#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;, &#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;, &#34;string&#34;)
+
+        def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, length: int = None) -&gt; None:
+                &#34;&#34;&#34;
+                Args:
+                        dtype:  string giving the datatype of the tensor elements
+                        dims:   A tuple of None, int, string (empty tuple designates a scalar)
+                        inits:  Optional values to initialize the tensor with
+
+                Remarks:
+                        Dimensions are specified as:
+
+                                None:           resizable/jagged anonymous dimension
+                                int:            fixed-size anonymous dimension
+                                string:         named dimension
+                        
+                        The first dimension can be fixed-size or resizable; all other dimensions can be fixed-size or jagged. 
+                &#34;&#34;&#34;
+                self.dtype = dtype
+                self.length = length  # Length is the actual length as stored (or None if unknown)
+                # Check that the type is valid
+                if dtype not in Tensor.valid_types:
+                        raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
+
+                self.dims = dims
+
+                self.assigned_name = &#34;&#34;  # Will be set if the Tensor is read from the db
+                self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
+
+                self.inits = inits
+                if self.inits is None:
+                        self.jagged = False
+                        self.shape = self.dims
+                else:
+                        # If scalar, convert to an ndarray scalar which will have shape ()
+                        if np.isscalar(self.inits):
+                                self.inits = np.array(self.inits)
+                        # If not jagged, then it&#39;s a regular ndarray
+                        if isinstance(self.inits, np.ndarray):
+                                self.shape = self.inits.shape
+                                self.jagged = False
+                                self._check_type(self.inits)
+                        else: # It&#39;s jagged: a list of ndarrays, possibly of different shapes
+                                assert isinstance(self.inits, list)
+                                self.jagged = True
+                                shape = list(self.inits[0].shape)
+                                for i, array in enumerate(self.inits):
+                                        assert isinstance(array, np.ndarray), &#34;All rows of jagged array must be numpy ndarrays&#34;
+                                        self._check_type(array)
+                                        if len(array.shape) != len(shape):
+                                                raise ValueError(f&#34;Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shape} at row 0&#34;)
+                                        for ix in range(len(shape)):
+                                                if shape[ix] != array.shape[ix]:
+                                                        shape[ix] = None
+                                self.shape = tuple([len(self.inits)] + shape)
+
+                        if len(self.dims) != len(self.shape):
+                                raise ValueError(f&#34;Rank mismatch: shape {self.dims} declared is not the same rank as shape {self.shape} of values&#34;)
+
+                for ix, dim in enumerate(self.dims):
+                        if dim is not None and not isinstance(dim, int) and not isinstance(dim, str):
+                                raise ValueError(f&#34;Dimension {ix} &#39;{dim}&#39; is invalid (must be None, int or str)&#34;)
+
+                        if isinstance(dim, int) and self.inits is not None:
+                                if self.shape[ix] != dim:  # type: ignore
+                                        raise IndexError(f&#34;Mismatch between the declared size {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
+                self.rank = len(self.dims)
+
+        def numpy_dtype(self) -&gt; str:
+                if self.dtype == &#34;string&#34;:
+                        return &#34;object&#34;
+                return self.dtype
+
+        def python_dtype(self) -&gt; Callable:
+                if self.dtype == &#34;string&#34;:
+                        return str
+                if self.dtype == &#34;bool&#34;:
+                        return bool
+                if self.dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
+                        return float
+                return int
+
+        def _compare(self, operator, other) -&gt; &#34;shoji.Filter&#34;:
+                if isinstance(other, Tensor):
+                        return shoji.TensorFilter(operator, self, other)
+                elif isinstance(other, str) or isinstance(other, int) or isinstance(other, float) or isinstance(other, bool):
+                        return shoji.ConstFilter(operator, self, other)
+                else:
+                        raise TypeError(&#34;Invalid operands for expression&#34;)
+
+        def __eq__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;==&#34;, other)
+                
+        def __ne__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;!=&#34;, other)
+
+        def __gt__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&gt;&#34;, other)
+
+        def __lt__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&lt;&#34;, other)
+
+        def __ge__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&gt;=&#34;, other)
+
+        def __le__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&lt;=&#34;, other)
+
+        def _check_type(self, inits) -&gt; None:
+                # Check that the type is exactly right
+                if self.dtype != inits.dtype.name:
+                        if self.dtype != &#34;string&#34;:
+                                raise TypeError(&#34;Tensor dtype and inits dtype do not match&#34;)
+                        if (self.dtype == &#34;string&#34; and inits.dtype.name != &#34;object&#34;) or (self.dtype == &#34;string&#34; and inits.dtype.name == &#34;object&#34; and not isinstance(inits.flat[0], str)):
+                                raise TypeError(&#34;string tensors must be initialized with ndarray dtype &#39;object&#39;, where objects are strings&#34;)
+
+        def __repr__(self) -&gt; str:
+                return f&#34;&lt;Tensor &#39;{self.dtype}&#39; {self.dims}, {self.length} row{&#39;s&#39; if self.length != 1 else &#39;&#39;}&gt;&#34;</code></pre>
+</details>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+<h2 class="section-title" id="header-classes">Classes</h2>
+<dl>
+<dt id="shoji.tensor.Tensor"><code class="flex name class">
+<span>class <span class="ident">Tensor</span></span>
+<span>(</span><span>dtype: str, dims: Tuple[Union[NoneType, int, str], ...], inits: Union[List[numpy.ndarray], numpy.ndarray] = None, length: int = None)</span>
+</code></dt>
+<dd>
+<div class="desc"><h2 id="args">Args</h2>
+<dl>
+<dt><strong><code>dtype</code></strong></dt>
+<dd>string giving the datatype of the tensor elements</dd>
+<dt><strong><code>dims</code></strong></dt>
+<dd>A tuple of None, int, string (empty tuple designates a scalar)</dd>
+<dt><strong><code>inits</code></strong></dt>
+<dd>Optional values to initialize the tensor with</dd>
+</dl>
+<h2 id="remarks">Remarks</h2>
+<p>Dimensions are specified as:</p>
+<pre><code>    None:           resizable/jagged anonymous dimension
+    int:            fixed-size anonymous dimension
+    string:         named dimension
+</code></pre>
+<p>The first dimension can be fixed-size or resizable; all other dimensions can be fixed-size or jagged.</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class Tensor:
+        valid_types = (&#34;bool&#34;, &#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;, &#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;, &#34;string&#34;)
+
+        def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, length: int = None) -&gt; None:
+                &#34;&#34;&#34;
+                Args:
+                        dtype:  string giving the datatype of the tensor elements
+                        dims:   A tuple of None, int, string (empty tuple designates a scalar)
+                        inits:  Optional values to initialize the tensor with
+
+                Remarks:
+                        Dimensions are specified as:
+
+                                None:           resizable/jagged anonymous dimension
+                                int:            fixed-size anonymous dimension
+                                string:         named dimension
+                        
+                        The first dimension can be fixed-size or resizable; all other dimensions can be fixed-size or jagged. 
+                &#34;&#34;&#34;
+                self.dtype = dtype
+                self.length = length  # Length is the actual length as stored (or None if unknown)
+                # Check that the type is valid
+                if dtype not in Tensor.valid_types:
+                        raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
+
+                self.dims = dims
+
+                self.assigned_name = &#34;&#34;  # Will be set if the Tensor is read from the db
+                self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
+
+                self.inits = inits
+                if self.inits is None:
+                        self.jagged = False
+                        self.shape = self.dims
+                else:
+                        # If scalar, convert to an ndarray scalar which will have shape ()
+                        if np.isscalar(self.inits):
+                                self.inits = np.array(self.inits)
+                        # If not jagged, then it&#39;s a regular ndarray
+                        if isinstance(self.inits, np.ndarray):
+                                self.shape = self.inits.shape
+                                self.jagged = False
+                                self._check_type(self.inits)
+                        else: # It&#39;s jagged: a list of ndarrays, possibly of different shapes
+                                assert isinstance(self.inits, list)
+                                self.jagged = True
+                                shape = list(self.inits[0].shape)
+                                for i, array in enumerate(self.inits):
+                                        assert isinstance(array, np.ndarray), &#34;All rows of jagged array must be numpy ndarrays&#34;
+                                        self._check_type(array)
+                                        if len(array.shape) != len(shape):
+                                                raise ValueError(f&#34;Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shape} at row 0&#34;)
+                                        for ix in range(len(shape)):
+                                                if shape[ix] != array.shape[ix]:
+                                                        shape[ix] = None
+                                self.shape = tuple([len(self.inits)] + shape)
+
+                        if len(self.dims) != len(self.shape):
+                                raise ValueError(f&#34;Rank mismatch: shape {self.dims} declared is not the same rank as shape {self.shape} of values&#34;)
+
+                for ix, dim in enumerate(self.dims):
+                        if dim is not None and not isinstance(dim, int) and not isinstance(dim, str):
+                                raise ValueError(f&#34;Dimension {ix} &#39;{dim}&#39; is invalid (must be None, int or str)&#34;)
+
+                        if isinstance(dim, int) and self.inits is not None:
+                                if self.shape[ix] != dim:  # type: ignore
+                                        raise IndexError(f&#34;Mismatch between the declared size {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
+                self.rank = len(self.dims)
+
+        def numpy_dtype(self) -&gt; str:
+                if self.dtype == &#34;string&#34;:
+                        return &#34;object&#34;
+                return self.dtype
+
+        def python_dtype(self) -&gt; Callable:
+                if self.dtype == &#34;string&#34;:
+                        return str
+                if self.dtype == &#34;bool&#34;:
+                        return bool
+                if self.dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
+                        return float
+                return int
+
+        def _compare(self, operator, other) -&gt; &#34;shoji.Filter&#34;:
+                if isinstance(other, Tensor):
+                        return shoji.TensorFilter(operator, self, other)
+                elif isinstance(other, str) or isinstance(other, int) or isinstance(other, float) or isinstance(other, bool):
+                        return shoji.ConstFilter(operator, self, other)
+                else:
+                        raise TypeError(&#34;Invalid operands for expression&#34;)
+
+        def __eq__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;==&#34;, other)
+                
+        def __ne__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;!=&#34;, other)
+
+        def __gt__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&gt;&#34;, other)
+
+        def __lt__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&lt;&#34;, other)
+
+        def __ge__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&gt;=&#34;, other)
+
+        def __le__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
+                return self._compare(&#34;&lt;=&#34;, other)
+
+        def _check_type(self, inits) -&gt; None:
+                # Check that the type is exactly right
+                if self.dtype != inits.dtype.name:
+                        if self.dtype != &#34;string&#34;:
+                                raise TypeError(&#34;Tensor dtype and inits dtype do not match&#34;)
+                        if (self.dtype == &#34;string&#34; and inits.dtype.name != &#34;object&#34;) or (self.dtype == &#34;string&#34; and inits.dtype.name == &#34;object&#34; and not isinstance(inits.flat[0], str)):
+                                raise TypeError(&#34;string tensors must be initialized with ndarray dtype &#39;object&#39;, where objects are strings&#34;)
+
+        def __repr__(self) -&gt; str:
+                return f&#34;&lt;Tensor &#39;{self.dtype}&#39; {self.dims}, {self.length} row{&#39;s&#39; if self.length != 1 else &#39;&#39;}&gt;&#34;</code></pre>
+</details>
+<h3>Class variables</h3>
+<dl>
+<dt id="shoji.tensor.Tensor.valid_types"><code class="name">var <span class="ident">valid_types</span></code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+</dl>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.tensor.Tensor.numpy_dtype"><code class="name flex">
+<span>def <span class="ident">numpy_dtype</span></span>(<span>self) -> str</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def numpy_dtype(self) -&gt; str:
+        if self.dtype == &#34;string&#34;:
+                return &#34;object&#34;
+        return self.dtype</code></pre>
+</details>
+</dd>
+<dt id="shoji.tensor.Tensor.python_dtype"><code class="name flex">
+<span>def <span class="ident">python_dtype</span></span>(<span>self) -> Callable</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def python_dtype(self) -&gt; Callable:
+        if self.dtype == &#34;string&#34;:
+                return str
+        if self.dtype == &#34;bool&#34;:
+                return bool
+        if self.dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
+                return float
+        return int</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+</dl>
+</section>
+</article>
+<nav id="sidebar">
+<h1>Index</h1>
+<div class="toc">
+<ul></ul>
+</div>
+<ul id="index">
+<li><h3>Super-module</h3>
+<ul>
+<li><code><a title="shoji" href="index.html">shoji</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-classes">Classes</a></h3>
+<ul>
+<li>
+<h4><code><a title="shoji.tensor.Tensor" href="#shoji.tensor.Tensor">Tensor</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.tensor.Tensor.numpy_dtype" href="#shoji.tensor.Tensor.numpy_dtype">numpy_dtype</a></code></li>
+<li><code><a title="shoji.tensor.Tensor.python_dtype" href="#shoji.tensor.Tensor.python_dtype">python_dtype</a></code></li>
+<li><code><a title="shoji.tensor.Tensor.valid_types" href="#shoji.tensor.Tensor.valid_types">valid_types</a></code></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</nav>
+</main>
+<footer id="footer">
+<p>Generated by <a href="https://pdoc3.github.io/pdoc"><cite>pdoc</cite> 0.8.1</a>.</p>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+<script>hljs.initHighlightingOnLoad()</script>
+</body>
+</html>
