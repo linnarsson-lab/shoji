@@ -78,6 +78,28 @@ class Filter:
         def __init__(self) -&gt; None:
                 self.dim: Union[str, int, None]
 
+        def _combine(self, operator: str, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                assert isinstance(other, Filter), &#34;Invalid logical expression&#34;
+                return shoji.CompoundFilter(operator, self, other)
+
+        def __and__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;&amp;&#34;, other)
+
+        def __or__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;|&#34;, other)
+
+        def __sub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;-&#34;, other)
+
+        def __rsub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return other._combine(&#34;-&#34;, self)
+
+        def __xor__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;^&#34;, other)
+
+        def __invert__(self) -&gt; &#34;Filter&#34;:
+                return shoji.CompoundFilter(&#34;~&#34;, self, None)
+
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 pass
 
@@ -89,7 +111,7 @@ class CompoundFilter(Filter):
         &#34;&#34;&#34;Filter that compares two filters&#34;&#34;&#34;
         def __init__(self, operator: str, left_operand: Filter, right_operand: Optional[Filter]) -&gt; None:
                 self.operator = operator
-                if operator not in (&#34;~&#34;, &#34;&amp;&#34;, &#34;|&#34;):
+                if operator not in (&#34;~&#34;, &#34;&amp;&#34;, &#34;|&#34;, &#34;-&#34;, &#34;^&#34;):
                         raise SyntaxError(f&#34;Invalid operator {operator}&#34;)
                 self.left_operand = left_operand
                 self.right_operand = right_operand
@@ -113,6 +135,16 @@ class CompoundFilter(Filter):
                         assert isinstance(self.left_operand, Filter)
                         assert isinstance(self.right_operand, Filter)
                         return np.union1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
+
+                if self.operator == &#34;-&#34;:
+                        assert isinstance(self.left_operand, Filter)
+                        assert isinstance(self.right_operand, Filter)
+                        return np.setdiff1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
+
+                if self.operator == &#34;^&#34;:
+                        assert isinstance(self.left_operand, Filter)
+                        assert isinstance(self.right_operand, Filter)
+                        return np.setxor1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
 
                 if self.operator == &#34;~&#34;:
                         assert isinstance(self.left_operand, Filter)
@@ -177,19 +209,6 @@ class ConstFilter(Filter):
                 if type(right_operand) not in (str, int, float, bool):
                         raise SyntaxError(f&#34;Only str, int, float and bool can be used as constants in filters&#34;)
 
-        def _combine(self, operator: str, other: Filter) -&gt; Filter:
-                assert isinstance(other, Filter), &#34;Invalid logical expression&#34;
-                return shoji.CompoundFilter(operator, self, other)
-
-        def __and__(self, other: Filter) -&gt; Filter:
-                return self._combine(&#34;&amp;&#34;, other)
-
-        def __or__(self, other: Filter) -&gt; Filter:
-                return self._combine(&#34;|&#34;, other)
-
-        def __invert__(self) -&gt; Filter:
-                return shoji.CompoundFilter(&#34;~&#34;, self, None)
-
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 return np.arange(self.left_operand.length)
 
@@ -197,7 +216,60 @@ class ConstFilter(Filter):
                 return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.assigned_name, self.operator, self.right_operand)
 
         def __repr__(self) -&gt; str:
-                return f&#34;({self.left_operand} {self.operator} {self.right_operand})&#34;</code></pre>
+                return f&#34;({self.left_operand} {self.operator} {self.right_operand})&#34;
+
+
+class DimensionSliceFilter(Filter):
+        def __init__(self, dim: shoji.Dimension, slice_: slice) -&gt; None:
+                self.dim = dim.assigned_name
+                self.dimension = dim
+                self.slice_ = slice_
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.dimension.length)
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                s = self.slice_.indices(self.dimension.length)
+                return np.arange(s[0], s[1], s[2])
+
+        def __repr__(self) -&gt; str:
+                s = self.slice_.indices(self.dimension.length)
+                return f&#34;({self.dim}[{s[0]}:{s[1]}:{s[2]}])&#34;
+
+
+class DimensionIndicesFilter(Filter):
+        def __init__(self, dim: shoji.Dimension, indices: np.ndarray) -&gt; None:
+                self.dim = dim.assigned_name
+                self.dimension = dim
+                self.indices = indices
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.dimension.length)
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.dimension.length
+                return self.indices[self.indices &lt; self.dimension.length]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.dim}[{self.indices}])&#34;
+
+
+class DimensionBoolFilter(Filter):
+        def __init__(self, dim: shoji.Dimension, selected: np.ndarray) -&gt; None:
+                self.dim = dim.assigned_name
+                self.dimension = dim
+                self.selected = selected
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.dimension.length)
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                if self.selected.shape[0] != self.dimension.length:
+                        raise IndexError(f&#34;Boolean array used for fancy indexing along &#39;{self.dim}&#39; has {self.selected.shape[0]} elements but dimension length is {self.dimension.length}&#34;)
+                return np.where(self.selected)[0]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.dim}[{self.selected}])&#34;</code></pre>
 </details>
 </section>
 <section>
@@ -223,7 +295,7 @@ class ConstFilter(Filter):
         &#34;&#34;&#34;Filter that compares two filters&#34;&#34;&#34;
         def __init__(self, operator: str, left_operand: Filter, right_operand: Optional[Filter]) -&gt; None:
                 self.operator = operator
-                if operator not in (&#34;~&#34;, &#34;&amp;&#34;, &#34;|&#34;):
+                if operator not in (&#34;~&#34;, &#34;&amp;&#34;, &#34;|&#34;, &#34;-&#34;, &#34;^&#34;):
                         raise SyntaxError(f&#34;Invalid operator {operator}&#34;)
                 self.left_operand = left_operand
                 self.right_operand = right_operand
@@ -247,6 +319,16 @@ class ConstFilter(Filter):
                         assert isinstance(self.left_operand, Filter)
                         assert isinstance(self.right_operand, Filter)
                         return np.union1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
+
+                if self.operator == &#34;-&#34;:
+                        assert isinstance(self.left_operand, Filter)
+                        assert isinstance(self.right_operand, Filter)
+                        return np.setdiff1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
+
+                if self.operator == &#34;^&#34;:
+                        assert isinstance(self.left_operand, Filter)
+                        assert isinstance(self.right_operand, Filter)
+                        return np.setxor1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
 
                 if self.operator == &#34;~&#34;:
                         assert isinstance(self.left_operand, Filter)
@@ -297,6 +379,16 @@ class ConstFilter(Filter):
                 assert isinstance(self.right_operand, Filter)
                 return np.union1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
 
+        if self.operator == &#34;-&#34;:
+                assert isinstance(self.left_operand, Filter)
+                assert isinstance(self.right_operand, Filter)
+                return np.setdiff1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
+
+        if self.operator == &#34;^&#34;:
+                assert isinstance(self.left_operand, Filter)
+                assert isinstance(self.right_operand, Filter)
+                return np.setxor1d(self.left_operand.get_rows(wsm), self.right_operand.get_rows(wsm))
+
         if self.operator == &#34;~&#34;:
                 assert isinstance(self.left_operand, Filter)
                 return np.setdiff1d(self.left_operand.get_all_rows(wsm), self.left_operand.get_rows(wsm))</code></pre>
@@ -330,19 +422,6 @@ class ConstFilter(Filter):
                 self.right_operand = right_operand
                 if type(right_operand) not in (str, int, float, bool):
                         raise SyntaxError(f&#34;Only str, int, float and bool can be used as constants in filters&#34;)
-
-        def _combine(self, operator: str, other: Filter) -&gt; Filter:
-                assert isinstance(other, Filter), &#34;Invalid logical expression&#34;
-                return shoji.CompoundFilter(operator, self, other)
-
-        def __and__(self, other: Filter) -&gt; Filter:
-                return self._combine(&#34;&amp;&#34;, other)
-
-        def __or__(self, other: Filter) -&gt; Filter:
-                return self._combine(&#34;|&#34;, other)
-
-        def __invert__(self) -&gt; Filter:
-                return shoji.CompoundFilter(&#34;~&#34;, self, None)
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 return np.arange(self.left_operand.length)
@@ -387,6 +466,192 @@ class ConstFilter(Filter):
 </dd>
 </dl>
 </dd>
+<dt id="shoji.filter.DimensionBoolFilter"><code class="flex name class">
+<span>class <span class="ident">DimensionBoolFilter</span></span>
+<span>(</span><span>dim: <a title="shoji.dimension.Dimension" href="dimension.html#shoji.dimension.Dimension">Dimension</a>, selected: numpy.ndarray)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class DimensionBoolFilter(Filter):
+        def __init__(self, dim: shoji.Dimension, selected: np.ndarray) -&gt; None:
+                self.dim = dim.assigned_name
+                self.dimension = dim
+                self.selected = selected
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.dimension.length)
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                if self.selected.shape[0] != self.dimension.length:
+                        raise IndexError(f&#34;Boolean array used for fancy indexing along &#39;{self.dim}&#39; has {self.selected.shape[0]} elements but dimension length is {self.dimension.length}&#34;)
+                return np.where(self.selected)[0]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.dim}[{self.selected}])&#34;</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="shoji.filter.Filter" href="#shoji.filter.Filter">Filter</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.filter.DimensionBoolFilter.get_all_rows"><code class="name flex">
+<span>def <span class="ident">get_all_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        return np.arange(self.dimension.length)</code></pre>
+</details>
+</dd>
+<dt id="shoji.filter.DimensionBoolFilter.get_rows"><code class="name flex">
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        if self.selected.shape[0] != self.dimension.length:
+                raise IndexError(f&#34;Boolean array used for fancy indexing along &#39;{self.dim}&#39; has {self.selected.shape[0]} elements but dimension length is {self.dimension.length}&#34;)
+        return np.where(self.selected)[0]</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.filter.DimensionIndicesFilter"><code class="flex name class">
+<span>class <span class="ident">DimensionIndicesFilter</span></span>
+<span>(</span><span>dim: <a title="shoji.dimension.Dimension" href="dimension.html#shoji.dimension.Dimension">Dimension</a>, indices: numpy.ndarray)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class DimensionIndicesFilter(Filter):
+        def __init__(self, dim: shoji.Dimension, indices: np.ndarray) -&gt; None:
+                self.dim = dim.assigned_name
+                self.dimension = dim
+                self.indices = indices
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.dimension.length)
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.dimension.length
+                return self.indices[self.indices &lt; self.dimension.length]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.dim}[{self.indices}])&#34;</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="shoji.filter.Filter" href="#shoji.filter.Filter">Filter</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.filter.DimensionIndicesFilter.get_all_rows"><code class="name flex">
+<span>def <span class="ident">get_all_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        return np.arange(self.dimension.length)</code></pre>
+</details>
+</dd>
+<dt id="shoji.filter.DimensionIndicesFilter.get_rows"><code class="name flex">
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.dimension.length
+        return self.indices[self.indices &lt; self.dimension.length]</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.filter.DimensionSliceFilter"><code class="flex name class">
+<span>class <span class="ident">DimensionSliceFilter</span></span>
+<span>(</span><span>dim: <a title="shoji.dimension.Dimension" href="dimension.html#shoji.dimension.Dimension">Dimension</a>, slice_: slice)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class DimensionSliceFilter(Filter):
+        def __init__(self, dim: shoji.Dimension, slice_: slice) -&gt; None:
+                self.dim = dim.assigned_name
+                self.dimension = dim
+                self.slice_ = slice_
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.dimension.length)
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                s = self.slice_.indices(self.dimension.length)
+                return np.arange(s[0], s[1], s[2])
+
+        def __repr__(self) -&gt; str:
+                s = self.slice_.indices(self.dimension.length)
+                return f&#34;({self.dim}[{s[0]}:{s[1]}:{s[2]}])&#34;</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="shoji.filter.Filter" href="#shoji.filter.Filter">Filter</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.filter.DimensionSliceFilter.get_all_rows"><code class="name flex">
+<span>def <span class="ident">get_all_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        return np.arange(self.dimension.length)</code></pre>
+</details>
+</dd>
+<dt id="shoji.filter.DimensionSliceFilter.get_rows"><code class="name flex">
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        s = self.slice_.indices(self.dimension.length)
+        return np.arange(s[0], s[1], s[2])</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
 <dt id="shoji.filter.Filter"><code class="flex name class">
 <span>class <span class="ident">Filter</span></span>
 </code></dt>
@@ -400,6 +665,28 @@ class ConstFilter(Filter):
         def __init__(self) -&gt; None:
                 self.dim: Union[str, int, None]
 
+        def _combine(self, operator: str, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                assert isinstance(other, Filter), &#34;Invalid logical expression&#34;
+                return shoji.CompoundFilter(operator, self, other)
+
+        def __and__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;&amp;&#34;, other)
+
+        def __or__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;|&#34;, other)
+
+        def __sub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;-&#34;, other)
+
+        def __rsub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return other._combine(&#34;-&#34;, self)
+
+        def __xor__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;^&#34;, other)
+
+        def __invert__(self) -&gt; &#34;Filter&#34;:
+                return shoji.CompoundFilter(&#34;~&#34;, self, None)
+
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 pass
 
@@ -410,6 +697,9 @@ class ConstFilter(Filter):
 <ul class="hlist">
 <li><a title="shoji.filter.CompoundFilter" href="#shoji.filter.CompoundFilter">CompoundFilter</a></li>
 <li><a title="shoji.filter.ConstFilter" href="#shoji.filter.ConstFilter">ConstFilter</a></li>
+<li><a title="shoji.filter.DimensionBoolFilter" href="#shoji.filter.DimensionBoolFilter">DimensionBoolFilter</a></li>
+<li><a title="shoji.filter.DimensionIndicesFilter" href="#shoji.filter.DimensionIndicesFilter">DimensionIndicesFilter</a></li>
+<li><a title="shoji.filter.DimensionSliceFilter" href="#shoji.filter.DimensionSliceFilter">DimensionSliceFilter</a></li>
 <li><a title="shoji.filter.TensorFilter" href="#shoji.filter.TensorFilter">TensorFilter</a></li>
 </ul>
 <h3>Methods</h3>
@@ -554,6 +844,27 @@ class ConstFilter(Filter):
 <ul class="">
 <li><code><a title="shoji.filter.ConstFilter.get_all_rows" href="#shoji.filter.ConstFilter.get_all_rows">get_all_rows</a></code></li>
 <li><code><a title="shoji.filter.ConstFilter.get_rows" href="#shoji.filter.ConstFilter.get_rows">get_rows</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.filter.DimensionBoolFilter" href="#shoji.filter.DimensionBoolFilter">DimensionBoolFilter</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.filter.DimensionBoolFilter.get_all_rows" href="#shoji.filter.DimensionBoolFilter.get_all_rows">get_all_rows</a></code></li>
+<li><code><a title="shoji.filter.DimensionBoolFilter.get_rows" href="#shoji.filter.DimensionBoolFilter.get_rows">get_rows</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.filter.DimensionIndicesFilter" href="#shoji.filter.DimensionIndicesFilter">DimensionIndicesFilter</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.filter.DimensionIndicesFilter.get_all_rows" href="#shoji.filter.DimensionIndicesFilter.get_all_rows">get_all_rows</a></code></li>
+<li><code><a title="shoji.filter.DimensionIndicesFilter.get_rows" href="#shoji.filter.DimensionIndicesFilter.get_rows">get_rows</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.filter.DimensionSliceFilter" href="#shoji.filter.DimensionSliceFilter">DimensionSliceFilter</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.filter.DimensionSliceFilter.get_all_rows" href="#shoji.filter.DimensionSliceFilter.get_all_rows">get_all_rows</a></code></li>
+<li><code><a title="shoji.filter.DimensionSliceFilter.get_rows" href="#shoji.filter.DimensionSliceFilter.get_rows">get_rows</a></code></li>
 </ul>
 </li>
 <li>

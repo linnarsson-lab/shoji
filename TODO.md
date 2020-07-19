@@ -1,10 +1,15 @@
 
 Enums?
 Pinning (prevent deletion) workspaces, dimensions and tensors
-Efficient range comparisons
-Use ranges with holes to speed up filtered reads further
 Maybe: use shoji as backing for xarray via dask
+View.groupby() and aggregate (or maybe Dimension.groupby()?)
+.aspandas(), .asxarray() etc.
+Move .from_loompy() to .toshoji() on loompy
 
+Make sure jagged & scalar tensors work as intended
+Exploit parallelism with futures
+Tensor shape property
+Accelerate tensors by chunking along all dimensions, before compressing (like HDF5)
 Filter by slice
 Filter by bool array or index array
 Write to database using assignment through a selector

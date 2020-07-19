@@ -36,7 +36,7 @@ db = shoji.connect()
 db.cancer_project = shoji.Workspace()  # Create a new workspace
 ws = db.cancer_project
 
-ws.samples = shoji.Dimension(size=None)  # Create a variable-length dimension
+ws.samples = shoji.Dimension(shape=None)  # Create a variable-length dimension
 ws.SampleID = shoji.Tensor(&quot;uint32&quot;, (&quot;samples&quot;,))  # Create a vector of sample IDs
 ws.SampleName = shoji.Tensor(&quot;string&quot;, (&quot;samples&quot;,))  # Create a vector of sample names
 ws.Age = shoji.Tensor(&quot;uint32&quot;, (&quot;samples&quot;,))  # Create a vector of ages
@@ -47,7 +47,7 @@ ws.Description = shoji.Tensor(&quot;string&quot;, (&quot;samples&quot;,))  # Cre
 dimension that describes a set of protein measurements, and a 2D tensor that contains protein
 measurements for each sample:</p>
 <pre><code class="python"># ...continued from above
-ws.proteins = shoji.Dimension(size=10)  # A fixed-length dimension (10 elements)
+ws.proteins = shoji.Dimension(shape=10)  # A fixed-length dimension (10 elements)
 ws.ProteinName = shoji.Tensor(&quot;string&quot;, (&quot;proteins&quot;,))
 ws.ProteinData = shoji.Tensor(&quot;float32&quot;, (&quot;samples&quot;, &quot;proteins&quot;))
 </code></pre>
@@ -98,7 +98,7 @@ db = shoji.connect()
 db.cancer_project = shoji.Workspace()  # Create a new workspace
 ws = db.cancer_project
 
-ws.samples = shoji.Dimension(size=None)  # Create a variable-length dimension
+ws.samples = shoji.Dimension(shape=None)  # Create a variable-length dimension
 ws.SampleID = shoji.Tensor(&#34;uint32&#34;, (&#34;samples&#34;,))  # Create a vector of sample IDs
 ws.SampleName = shoji.Tensor(&#34;string&#34;, (&#34;samples&#34;,))  # Create a vector of sample names
 ws.Age = shoji.Tensor(&#34;uint32&#34;, (&#34;samples&#34;,))  # Create a vector of ages
@@ -113,7 +113,7 @@ measurements for each sample:
 
 ```python
 # ...continued from above
-ws.proteins = shoji.Dimension(size=10)  # A fixed-length dimension (10 elements)
+ws.proteins = shoji.Dimension(shape=10)  # A fixed-length dimension (10 elements)
 ws.ProteinName = shoji.Tensor(&#34;string&#34;, (&#34;proteins&#34;,))
 ws.ProteinData = shoji.Tensor(&#34;float32&#34;, (&#34;samples&#34;, &#34;proteins&#34;))
 ```
@@ -194,6 +194,9 @@ class WorkspaceManager:
                 tensors = [self._subspace[&#34;tensors&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subspace[&#34;tensors&#34;].range()]]
                 return self._subspace.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
+        def __contains__(self, name: str) -&gt; bool:
+                return shoji.io.read_entity(self._db.transaction, self, name) != None
+
         def __getattr__(self, name: str) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, shoji.Tensor]:
                 result = shoji.io.read_entity(self._db.transaction, self, name)
                 if result is None:
@@ -222,14 +225,34 @@ class WorkspaceManager:
                         # Check that the first letter is lowercase
                         if not name[0].islower():
                                 raise AttributeError(&#34;Dimension name must begin with a lowercase letter&#34;)
-                        shoji.io.write_dimension(self._db.transaction, self, name, value)
+                        shoji.io.create_or_update_dimension(self._db.transaction, self, name, value)
                 elif isinstance(value, shoji.Tensor):
                         tensor = value
                         # Check that the first letter is uppercase
                         if not name[0].isupper():
                                 raise AttributeError(&#34;Tensor name must begin with an uppercase letter&#34;)
-                        shoji.io.create_tensor(self._db.transaction, self, name, tensor)
-                        shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
+                        with shoji.Transaction(self):
+                                shoji.io.create_tensor(self._db.transaction, self, name, tensor)
+                                # Check all the dimension constraints
+                                for i, tdim in enumerate(tensor.dims):
+                                        if isinstance(tensor.dims[0], str):
+                                                dim = self[tensor.dims[i]]
+                                                assert isinstance(dim, shoji.Dimension)
+                                                if dim.shape is not None:
+                                                        if tensor.inits is None:
+                                                                raise ValueError(f&#34;Tensor &#39;{name}&#39; with fixed-shape dimension {i} (&#39;{tensor.dims[i]}&#39;) must be initialized when created&#34;)
+                                                        else:
+                                                                if tensor.jagged:
+                                                                        for row in tensor.inits:
+                                                                                if row.shape[i] != dim.shape:
+                                                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{tensor.dims[i]}&#39;) must be exactly {dim.shape} elements long&#34;)
+                                                                elif dim.shape != tensor.inits.shape[i]:  # type: ignore
+                                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{tensor.dims[i]}&#39;) must be exactly {dim.shape} elements long&#34;)
+                                if tensor.inits is not None:
+                                        if tensor.rank &gt; 0 and isinstance(tensor.dims[0], str) and self[tensor.dims[0]].length == 0:
+                                                shoji.io.append_tensors(self._db.transaction, self, tensor.dims[0], {name: tensor.inits})
+                                        else:
+                                                shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
                 else:
                         super().__setattr__(name, value)
         
@@ -315,6 +338,9 @@ class WorkspaceManager:
                 tensors = [self._subspace[&#34;tensors&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subspace[&#34;tensors&#34;].range()]]
                 return self._subspace.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
+        def __contains__(self, name: str) -&gt; bool:
+                return shoji.io.read_entity(self._db.transaction, self, name) != None
+
         def __getattr__(self, name: str) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, shoji.Tensor]:
                 result = shoji.io.read_entity(self._db.transaction, self, name)
                 if result is None:
@@ -343,14 +369,34 @@ class WorkspaceManager:
                         # Check that the first letter is lowercase
                         if not name[0].islower():
                                 raise AttributeError(&#34;Dimension name must begin with a lowercase letter&#34;)
-                        shoji.io.write_dimension(self._db.transaction, self, name, value)
+                        shoji.io.create_or_update_dimension(self._db.transaction, self, name, value)
                 elif isinstance(value, shoji.Tensor):
                         tensor = value
                         # Check that the first letter is uppercase
                         if not name[0].isupper():
                                 raise AttributeError(&#34;Tensor name must begin with an uppercase letter&#34;)
-                        shoji.io.create_tensor(self._db.transaction, self, name, tensor)
-                        shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
+                        with shoji.Transaction(self):
+                                shoji.io.create_tensor(self._db.transaction, self, name, tensor)
+                                # Check all the dimension constraints
+                                for i, tdim in enumerate(tensor.dims):
+                                        if isinstance(tensor.dims[0], str):
+                                                dim = self[tensor.dims[i]]
+                                                assert isinstance(dim, shoji.Dimension)
+                                                if dim.shape is not None:
+                                                        if tensor.inits is None:
+                                                                raise ValueError(f&#34;Tensor &#39;{name}&#39; with fixed-shape dimension {i} (&#39;{tensor.dims[i]}&#39;) must be initialized when created&#34;)
+                                                        else:
+                                                                if tensor.jagged:
+                                                                        for row in tensor.inits:
+                                                                                if row.shape[i] != dim.shape:
+                                                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{tensor.dims[i]}&#39;) must be exactly {dim.shape} elements long&#34;)
+                                                                elif dim.shape != tensor.inits.shape[i]:  # type: ignore
+                                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{tensor.dims[i]}&#39;) must be exactly {dim.shape} elements long&#34;)
+                                if tensor.inits is not None:
+                                        if tensor.rank &gt; 0 and isinstance(tensor.dims[0], str) and self[tensor.dims[0]].length == 0:
+                                                shoji.io.append_tensors(self._db.transaction, self, tensor.dims[0], {name: tensor.inits})
+                                        else:
+                                                shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
                 else:
                         super().__setattr__(name, value)
         

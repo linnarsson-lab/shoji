@@ -32,24 +32,21 @@ import shoji
 
 
 class Transaction:
-    def __init__(self, ws: shoji.WorkspaceManager) -&gt; None:
-        self.db = ws._db
+    def __init__(self, wsm: shoji.WorkspaceManager) -&gt; None:
+        self.db = wsm._db
           
     def __enter__(self):
         self.db.transaction = self.db.create_transaction()
-        print(&#34;Transacion created&#34;)
         return self
       
     def __exit__(self, exc_type, exc_value, exc_traceback): 
         if exc_type is None:
             self.db.transaction.commit().wait()
             self.db.transaction = self.db
-            print(&#34;Transaction committed&#34;)
             return True  # There was no exception
         else:
             self.db.transaction.reset()
             self.db.transaction = self.db
-            print(&#34;Transaction rolled back&#34;)
             return False  # Re-raise the exception</code></pre>
 </details>
 </section>
@@ -64,7 +61,7 @@ class Transaction:
 <dl>
 <dt id="shoji.transaction.Transaction"><code class="flex name class">
 <span>class <span class="ident">Transaction</span></span>
-<span>(</span><span>ws: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>)</span>
+<span>(</span><span>wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -73,24 +70,21 @@ class Transaction:
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class Transaction:
-    def __init__(self, ws: shoji.WorkspaceManager) -&gt; None:
-        self.db = ws._db
+    def __init__(self, wsm: shoji.WorkspaceManager) -&gt; None:
+        self.db = wsm._db
           
     def __enter__(self):
         self.db.transaction = self.db.create_transaction()
-        print(&#34;Transacion created&#34;)
         return self
       
     def __exit__(self, exc_type, exc_value, exc_traceback): 
         if exc_type is None:
             self.db.transaction.commit().wait()
             self.db.transaction = self.db
-            print(&#34;Transaction committed&#34;)
             return True  # There was no exception
         else:
             self.db.transaction.reset()
             self.db.transaction = self.db
-            print(&#34;Transaction rolled back&#34;)
             return False  # Re-raise the exception</code></pre>
 </details>
 </dd>

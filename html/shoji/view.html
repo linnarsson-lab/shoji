@@ -31,24 +31,24 @@ Views of tensors, defined by filters.
 from typing import Tuple
 import shoji
 import numpy as np
-import blosc
 
 
 class View:
         def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter]) -&gt; None:
                 assert all([isinstance(f.dim, str) for f in filters])
-                self.filters = {f.dim: f for f in filters}
-                self.wsm = wsm
-
+                super().__setattr__(&#34;filters&#34;, {f.dim: f for f in filters})
+                super().__setattr__(&#34;wsm&#34;, wsm)
+        
         def __getattr__(self, name: str) -&gt; np.ndarray:
                 # Get the tensor
                 tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;{name} is not a Tensor&#34;
+                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
                 if tensor.rank == 0:
+                        codec = shoji.Codec(tensor.dtype)
                         # Read the value directly, since you can&#39;t filter a scalar
                         key = self.wsm._subspace.pack((&#34;tensor_values&#34;, name, 0, 0))
                         val = self.wsm._db.transaction[key]
-                        return blosc.unpack_array(val)
+                        return codec.decode(val)
 
                 indices = None
                 if tensor.dims[0] in self.filters:
@@ -63,7 +63,19 @@ class View:
                                 # Filter this dimension
                                 indices = self.filters[dim].get_rows(self.wsm)
                                 result = result.take(indices, axis=i)
-                return result</code></pre>
+                return result
+
+        def __setattr__(self, name: str, vals: np.ndarray) -&gt; None:
+                tensor: shoji.Tensor = self.wsm[name]
+                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
+                indices = []
+                for dim in tensor.dims:
+                        if dim in self.filters:
+                                indices.append(np.sort(self.filters[tensor.dims[0]].get_rows(self.wsm)))
+                        else:
+                                indices.append(slice(None))
+                tensor.inits = vals
+                shoji.io.update_tensor_values(self.wsm._db.transaction, self.wsm, name, indices, tensor)</code></pre>
 </details>
 </section>
 <section>
@@ -88,18 +100,19 @@ class View:
 <pre><code class="python">class View:
         def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter]) -&gt; None:
                 assert all([isinstance(f.dim, str) for f in filters])
-                self.filters = {f.dim: f for f in filters}
-                self.wsm = wsm
-
+                super().__setattr__(&#34;filters&#34;, {f.dim: f for f in filters})
+                super().__setattr__(&#34;wsm&#34;, wsm)
+        
         def __getattr__(self, name: str) -&gt; np.ndarray:
                 # Get the tensor
                 tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;{name} is not a Tensor&#34;
+                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
                 if tensor.rank == 0:
+                        codec = shoji.Codec(tensor.dtype)
                         # Read the value directly, since you can&#39;t filter a scalar
                         key = self.wsm._subspace.pack((&#34;tensor_values&#34;, name, 0, 0))
                         val = self.wsm._db.transaction[key]
-                        return blosc.unpack_array(val)
+                        return codec.decode(val)
 
                 indices = None
                 if tensor.dims[0] in self.filters:
@@ -114,7 +127,19 @@ class View:
                                 # Filter this dimension
                                 indices = self.filters[dim].get_rows(self.wsm)
                                 result = result.take(indices, axis=i)
-                return result</code></pre>
+                return result
+
+        def __setattr__(self, name: str, vals: np.ndarray) -&gt; None:
+                tensor: shoji.Tensor = self.wsm[name]
+                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
+                indices = []
+                for dim in tensor.dims:
+                        if dim in self.filters:
+                                indices.append(np.sort(self.filters[tensor.dims[0]].get_rows(self.wsm)))
+                        else:
+                                indices.append(slice(None))
+                tensor.inits = vals
+                shoji.io.update_tensor_values(self.wsm._db.transaction, self.wsm, name, indices, tensor)</code></pre>
 </details>
 </dd>
 </dl>

@@ -43,20 +43,22 @@ class Dimension:
 		self.shape = shape  # None means variable length (i.e. can append) or jagged
 
 		self.length = length  # Actual length, will be set when dimension is read from db
-		self.assigned_name = ""  # Will be set if the Dimension is read from the db
+		self.name = ""  # Will be set if the Dimension is read from the db
 		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
 
-	def __getitem__(self, key) -> "shoji.Filter":
+	def __getitem__(self, key) -> "shoji.View":
+		if self.wsm is None:
+			raise ValueError("Cannot filter unbound dimension")
 		if isinstance(key, slice):
-			return shoji.DimensionSliceFilter(self, key)
-		if isinstance(key, list) or isinstance(key, tuple):
+			return shoji.View(self.wsm, (shoji.DimensionSliceFilter(self, key),))
+		if isinstance(key, (list, tuple, int)):
 			key = np.array(key)
 		if isinstance(key, np.ndarray):
 			if np.issubdtype(key.dtype, np.bool_):
-				return shoji.DimensionBoolFilter(self, key)
+				return shoji.View(self.wsm, (shoji.DimensionBoolFilter(self, key),))
 			elif np.issubdtype(key.dtype, np.int_):
-				return shoji.DimensionIndicesFilter(self, key)
-		raise IndexError(f"Invalid fancy index along dimension '{self.assigned_name}' (only slice, bool array or int array are allowed)")
+				return shoji.View(self.wsm, (shoji.DimensionIndicesFilter(self, key),))
+		raise IndexError(f"Invalid fancy index along dimension '{self.name}' (only slice, bool array or int array are allowed)")
 
 	def __repr__(self) -> str:
 		if self.shape is None:
@@ -92,11 +94,11 @@ class Dimension:
 
 		# Total size of the transaction (for jagged arrays, sum of row sizes)
 		n_bytes = sum([(n.size * n.itemsize if isinstance(n, np.ndarray) else (sum(i.size * i.itemsize) for i in n)) for n in vals.values()])
-		n_batches = n_bytes // 5_000_000 + 1 # Should be plenty, given that we'll also be compressing the rows when writing
-		n_rows_per_transaction = n_rows // n_batches
+		n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we'll also be compressing the rows when writing
+		n_rows_per_transaction = max(1, n_rows // n_batches)
 		ix: int = 0
 		while ix < n_rows:
 			with shoji.Transaction(self.wsm):
 				batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-				shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.assigned_name, batch)
+				shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
 			ix += n_rows_per_transaction

@@ -32,10 +32,9 @@ Internal low-level I/O routines, not intended for end users.
 from typing import Union, Optional, Tuple, Dict, List
 import fdb
 import numpy as np
-import blosc
 import shoji
 import numba
-import numcodecs
+import struct
 
 
 @fdb.transactional
@@ -56,16 +55,18 @@ def read_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str
                 child = subspace.open(tr, name)
                 return shoji.WorkspaceManager(wsm._db, child, wsm._path + (name,))
         elif tr[subspace[&#34;dimensions&#34;][name]].present():
-                dim = shoji.Dimension(size=int.from_bytes(tr[subspace[&#34;dimensions&#34;][name]], &#34;little&#34;, signed=True))
+                val = tr[subspace[&#34;dimensions&#34;][name]]
+                dim = shoji.Dimension(shape=int.from_bytes(val[:8], &#34;little&#34;, signed=True), length=int.from_bytes(val[8:], &#34;little&#34;, signed=False))
                 dim.assigned_name = name
                 dim.wsm = wsm
                 return dim
         else:
-                # key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (1 if tensor.chunked else 0, len(tensor.inits))
+                # key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (jagged, length)
                 tensor_tuples = tr[subspace.range((&#34;tensors&#34;, name))]
                 for k, _ in tensor_tuples:
                         key = subspace.unpack(k)
                         tensor = shoji.Tensor(key[2], key[4:4+key[3]], length=key[-1])
+                        tensor.jagged = key[-2] == 1
                         tensor.assigned_name = name
                         tensor.wsm = wsm
                         return tensor
@@ -84,14 +85,19 @@ def delete_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 
 
 @fdb.transactional
-def write_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: shoji.Dimension):
+def create_or_update_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: shoji.Dimension):
         subspace = wsm._subspace
         # Check that name doesn&#39;t already exist
         existing_name = name_exists(tr, wsm, name)
         if existing_name is not None:
-                raise AttributeError(f&#34;Name already exists (as {existing_name})&#34;)
-        # Create the dimension
-        tr[subspace[&#34;dimensions&#34;][name]] = (dim.size if dim.size is not None else -1).to_bytes(8, &#34;little&#34;, signed=True)
+                if existing_name != &#34;Dimension&#34;:
+                        raise AttributeError(f&#34;Name already exists (as {existing_name})&#34;)
+                # Update an existing dimension
+                prev_dim: shoji.Dimension = read_entity(tr, wsm, name)
+                if prev_dim.shape != dim.shape:
+                        raise AttributeError(f&#34;Cannot modify shape of existing dimension &#39;{name}&#39;&#34;)
+        # Create or update the dimension
+        tr[subspace[&#34;dimensions&#34;][name]] = (dim.shape if dim.shape is not None else -1).to_bytes(8, &#34;little&#34;, signed=True) + dim.length.to_bytes(8, &#34;little&#34;, signed=False)
 
 
 @fdb.transactional
@@ -104,114 +110,260 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
         # Check that the dimensions of the tensor exist
         for ix, d in enumerate(tensor.dims):
                 if isinstance(d, str):
-                        temp = wsm[d]
-                        if isinstance(temp, shoji.Dimension):
-                                dim = temp
-                                # Check that the dimensions of the tensor match the shape of the tensor
-                                if dim.size is not None:
-                                        if tensor.inits is not None and tensor.shape[ix] != dim.size:
-                                                raise IndexError(f&#34;Mismatch between the declared size {dim.size} of dimension &#39;{d}&#39; and the shape {tensor.shape} of values&#34;)
+                        dim = wsm[d]
+                        assert isinstance(dim, shoji.Dimension)
+                        # Check that the dimensions of the tensor match the shape of the tensor
+                        if dim.shape is None:
+                                if ix &gt; 0:
+                                        tensor.jagged = True
                         else:
-                                raise AttributeError(d)
-        # Create the tensor with its initial data (if provided)
-        # TODO: handle chunking
+                                if tensor.inits is not None and tensor.shape[ix] != dim.shape:
+                                        raise IndexError(f&#34;Mismatch between the declared shape {dim.shape} of dimension &#39;{d}&#39; and the shape {tensor.shape} of values&#34;)
         # Store tensor definition
-        length = 0
-        # if tensor.inits is not None and not np.ndim(tensor.inits) == 0:
-        #       length = len(tensor.inits)
-        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (0, length)
+        # (&#34;tensors&#34;, name, dtype, rank) + dims + (jagged, length)
+        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (1 if tensor.jagged else 0, 0)
         key = subspace.pack(key_tuple)
         tr[key] = b&#39;&#39;
 
 
+def coerce_dtype(dtype, v) -&gt; Union[int, float, bool, str]:
+        if dtype in (&#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;):
+                return int(v)
+        elif dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
+                return float(v)
+        elif dtype == &#34;bool&#34;:
+                return bool(v)
+        elif dtype == &#34;string&#34;:
+                return str(v)
+        else:
+                raise TypeError()
+
+
 @fdb.transactional
 def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -&gt; None:
-        # TODO: write in row-ranges to avoid transaction byte limit
         CHUNK_SIZE = 1_000
         subspace = wsm._subspace
         if tensor.inits is not None:
                 codec = shoji.Codec(tensor.dtype)
                 if np.ndim(tensor.inits) == 0:  # It&#39;s a scalar value
                         key = subspace.pack((&#34;tensor_values&#34;, name) + (0, 0))
-                        #tr[key] = blosc.pack_array(np.array(tensor.inits))
                         tr[key] = codec.encode(np.array(tensor.inits))
                 else:
                         # Update the length
                         old_length: int = wsm[name].length  # type: ignore
                         length = len(tensor.inits) + old_length  # type: ignore
                         tr.clear_range_startswith(subspace[&#34;tensors&#34;][name].key())
-                        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (0, length)
+                        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (1 if tensor.jagged else 0, length)
                         key = subspace.pack(key_tuple)
                         tr[key] = b&#39;&#39;
-                        for i in range(len(tensor.inits)):
-                                encoded = codec.encode(np.array(tensor.inits[i]))
-                                for j in range(0, len(encoded), CHUNK_SIZE):
-                                        key = subspace.pack((&#34;tensor_values&#34;, name, i + old_length, j // CHUNK_SIZE))
-                                        tr[key] = encoded[j:j+CHUNK_SIZE]
                         if tensor.rank == 1:
+                                # Save the values unchunked
+                                for i in range(len(tensor.inits)):
+                                        key = subspace.pack((&#34;tensor_values&#34;, name, i + old_length, 0))
+                                        x = tensor.inits[i]
+                                        if tensor.dtype == &#34;string&#34;:
+                                                tr[key] = x.encode()
+                                        elif tensor.dtype == &#34;float32&#34;:
+                                                tr[key] = struct.pack(&#34;f&#34;, x)
+                                        elif tensor.dtype == &#34;float64&#34;:
+                                                tr[key] = struct.pack(&#34;d&#34;, x)
+                                        elif tensor.dtype == &#34;uint16&#34;:
+                                                tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=False)
+                                        elif tensor.dtype == &#34;uint32&#34;:
+                                                tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=False)
+                                        elif tensor.dtype == &#34;uint64&#34;:
+                                                tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=False)
+                                        elif tensor.dtype == &#34;int16&#34;:
+                                                tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=True)
+                                        elif tensor.dtype == &#34;int32&#34;:
+                                                tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=True)
+                                        elif tensor.dtype == &#34;int64&#34;:
+                                                tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=True)
+                                        elif tensor.dtype == &#34;bool&#34;:
+                                                tr[key] = int(x).to_bytes(1, &#34;little&#34;, signed=False)
+
                                 # Create an index
-                                if tensor.dtype in (&#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;):
-                                        values = [int(v) for v in tensor.inits]
-                                elif tensor.dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
-                                        values = [float(v) for v in tensor.inits]
-                                elif tensor.dtype == &#34;bool&#34;:
-                                        values = [bool(v) for v in tensor.inits]
-                                elif tensor.dtype == &#34;string&#34;:
-                                        values = [str(v) for v in tensor.inits]
-                                else:
-                                        raise TypeError()
+                                values = [coerce_dtype(tensor.dtype, v) for v in tensor.inits]
                                 for i, value in enumerate(values):
                                         key = subspace.pack((&#34;tensor_indexes&#34;, name, value, int(i + old_length)))
                                         tr[key] = b&#39;&#39;
+                        else:
+                                for i in range(len(tensor.inits)):
+                                        encoded = codec.encode(np.array(tensor.inits[i]))
+                                        for j in range(0, len(encoded), CHUNK_SIZE):
+                                                key = subspace.pack((&#34;tensor_values&#34;, name, i + old_length, j // CHUNK_SIZE))
+                                                tr[key] = encoded[j:j+CHUNK_SIZE]
+
+
+@fdb.transactional
+def update_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, indices: Tuple[slice, np.ndarray], tensor: shoji.Tensor) -&gt; None:
+        CHUNK_SIZE = 1_000
+        subspace = wsm._subspace
+        codec = shoji.Codec(tensor.dtype)
+        # Better read the tensor metadata again inside the transaction
+        temp = tensor.inits
+        tensor: shoji.Tensor = wsm[name]
+        tensor.inits = temp
+
+        if isinstance(indices[0], slice):
+                s = indices[0].indices(tensor.length)
+                rows = np.arange(s[0], s[1], s[2])
+        else:
+                rows = indices[0]
+
+        if np.ndim(tensor.inits) == 0:  # It&#39;s a scalar value
+                assert len(indices) != 0, &#34;Cannot index scalar value&#34;
+                key = subspace.pack((&#34;tensor_values&#34;, name) + (0, 0))
+                tr[key] = codec.encode(np.array(tensor.inits))
+        else:
+                # Read the current data that we want to modify
+                if isinstance(indices[0], slice):
+                        prev = read_filtered_tensor(tr, subspace, name, tensor, np.arange(indices[0].start, indices[0].stop, indices[0].step))
+                else:
+                        prev = read_filtered_tensor(tr, subspace, name, tensor, indices[0])
+
+                # Modify the data row by row (in case the tensor is jagged)
+                for ix in range(len(prev)):
+                        row = prev[ix]
+                        
+                        if tensor.rank == 1:
+                                # Remove index entries
+                                key = subspace.pack((&#34;tensor_indexes&#34;, name, coerce_dtype(tensor.dtype, row), int(rows[ix])))
+                                del tr[key]
+                                prev[ix] = tensor.inits[ix]
+                        else:
+                                # Expand any slices in the indices
+                                actual_indices = []
+                                for i, ind in enumerate(indices[1:]):
+                                        if isinstance(ind, slice):
+                                                s = ind.indices(prev.shape[i + 1])
+                                                actual_indices.append(np.arange(s[0], s[1], s[2]))
+                                        else:
+                                                actual_indices.append(ind)
+                                row[actual_indices] = tensor.inits
+
+                # Now save the tensor back to the appropriate rows
+                if tensor.rank == 1:
+                        for i, j in enumerate(rows):
+                                key = subspace.pack((&#34;tensor_values&#34;, name, int(j), 0))
+                                x = tensor.inits[i]
+                                if tensor.dtype == &#34;string&#34;:
+                                        tr[key] = x.encode()
+                                elif tensor.dtype == &#34;float32&#34;:
+                                        tr[key] = struct.pack(&#34;f&#34;, x)
+                                elif tensor.dtype == &#34;float64&#34;:
+                                        tr[key] = struct.pack(&#34;d&#34;, x)
+                                elif tensor.dtype == &#34;uint16&#34;:
+                                        tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=False)
+                                elif tensor.dtype == &#34;uint32&#34;:
+                                        tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=False)
+                                elif tensor.dtype == &#34;uint64&#34;:
+                                        tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=False)
+                                elif tensor.dtype == &#34;int16&#34;:
+                                        tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=True)
+                                elif tensor.dtype == &#34;int32&#34;:
+                                        tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=True)
+                                elif tensor.dtype == &#34;int64&#34;:
+                                        tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=True)
+                                elif tensor.dtype == &#34;bool&#34;:
+                                        tr[key] = int(x).to_bytes(1, &#34;little&#34;, signed=False)
+
+                        # Create index entries
+                        values = [coerce_dtype(tensor.dtype, v) for v in tensor.inits]
+                        for i, value in enumerate(values):
+                                key = subspace.pack((&#34;tensor_indexes&#34;, name, value, int(rows[i])))
+                                tr[key] = b&#39;&#39;
+                else:
+                        for i, j in enumerate(rows):
+                                encoded = codec.encode(np.array(tensor.inits[i]))
+                                for k in range(0, len(encoded), CHUNK_SIZE):
+                                        key = subspace.pack((&#34;tensor_values&#34;, name, int(j), k // CHUNK_SIZE))
+                                        tr[key] = encoded[k:k + CHUNK_SIZE]
 
 
 @numba.jit
-def ranges(elements):
+def compute_ranges(elements):
+    elements = np.sort(elements)
     ranges = []
-    start = 0
+    start = elements[0]
     for ix in range(1, len(elements)):
         if elements[ix] != elements[ix - 1] + 1:
-            ranges.append((start, ix - 1))
-            start = ix
-    ranges.append((start, len(elements)))
+            ranges.append((start, elements[ix - 1]))
+            start = elements[ix]
+    ranges.append((start, elements[-1]))
     return ranges
 
 
 @fdb.transactional
-def read_chunked_row(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int) -&gt; bytes:
+def read_chunked_rows(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int, j: int, codec: shoji.Codec) -&gt; List[np.ndarray]:
+        start = subspace.range((&#34;tensor_values&#34;, name, i)).start
+        stop = subspace.range((&#34;tensor_values&#34;, name, j)).stop
+        result = []
+        ix = i
         encoded = bytearray()
-        j = 0
-        while True:
-                chunk = tr[subspace.pack((&#34;tensor_values&#34;, name, i, j))]
-                if not chunk.present():
-                        break
-                encoded += chunk.value
-                j += 1
-        return bytes(encoded)
+        for k, v in tr.get_range(start, stop):
+                row = subspace.unpack(k)[-2]
+                if row != ix:
+                        result.append(codec.decode(bytes(encoded)))
+                        encoded = bytearray()
+                        ix = row
+                encoded += v
+        result.append(codec.decode(bytes(encoded)))
+        return result
+
+@fdb.transactional
+def read_unchunked_rows(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int, j: int, dtype: str) -&gt; Union[List[float], List[int], List[str], List[bool]]:
+        start = subspace.range((&#34;tensor_values&#34;, name, i)).start
+        stop = subspace.range((&#34;tensor_values&#34;, name, j)).stop
+        vals = [v for _,v in tr.get_range(start, stop)]
+        if dtype == &#34;string&#34;:
+                return [x.decode() for x in vals]
+        if dtype == &#34;float32&#34;:
+                return [struct.unpack(&#34;f&#34;, x)[0] for x in vals]
+        if dtype == &#34;float64&#34;:
+                return [struct.unpack(&#34;d&#34;, x)[0] for x in vals]
+        if dtype == &#34;bool&#34;:
+                return [bool(int.from_bytes(x, &#34;little&#34;, signed=False)) for x in vals]
+        signed = True
+        if dtype[0] == &#34;u&#34;:
+                signed = False
+        return [int.from_bytes(x, &#34;little&#34;, signed=signed) for x in vals]
 
 
 @fdb.transactional
 def read_filtered_tensor(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, tensor: shoji.Tensor, indices: np.ndarray = None) -&gt; np.ndarray:
-        # TODO: read in row-ranges to avoid transaction byte limit
-        # TODO: use range reads where possible to improve performance
-        # TODO: use segmented reads https://apple.github.io/foundationdb/segmented-range-reads.html
         assert tensor.length is not None
+        # Convert the list of indices to ranges as far as possible
         if indices is None:
-                indices = np.arange(tensor.length)
+                ranges = [(0, tensor.length)]
+                n_rows = tensor.length
+        else:
+                ranges = compute_ranges(indices)
+                n_rows = len(indices)
         codec = shoji.Codec(tensor.dtype)
-        n_rows = indices.shape[0]
+
         if tensor.jagged:
-                resultj = []
-                for i in indices:
-                        resultj.append(codec.decode(read_chunked_row(tr, subspace, name, i)))
+                resultj: List[np.ndarray] = []
+                for (start, stop) in ranges:
+                        resultj += read_chunked_rows(tr, subspace, name, start, stop, codec)
                 return resultj
         else:
-                result = None
-                for i, j in enumerate(indices):
-                        row = codec.decode(read_chunked_row(tr, subspace, name, i))
-                        if result is None:
-                                result = np.empty((n_rows,) + row.shape, dtype=row.dtype)
-                        result[i] = row
+                if tensor.rank == 1:
+                        result = np.empty(n_rows, dtype=tensor.numpy_dtype())
+                        ix = 0
+                        for (start, stop) in ranges:
+                                rows = read_unchunked_rows(tr, subspace, name, start, stop, dtype=tensor.dtype)
+                                result[ix: ix + (stop - start + 1)] = rows
+                                ix += stop - start + 1
+                else:
+                        result = None
+                        ix = 0
+                        for start, stop in ranges:
+                                rows = read_chunked_rows(tr, subspace, name, start, stop, codec)
+                                if result is None:
+                                        result = np.empty((n_rows,) + rows[0].shape, dtype=rows[0].dtype)
+                                result[ix: ix + (stop - start + 1)] = np.array(rows)
+                                ix += (stop - start + 1)
         return result
 
 
@@ -261,14 +413,6 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
         subspace = wsm._subspace
         tensors: Dict[str, shoji.Tensor] = {}
 
-        # Check that all the values have same length
-        n_values = -1
-        for values in vals.values():
-                if n_values == -1:
-                        n_values = len(values)
-                elif len(values) != n_values:
-                        raise ValueError(f&#34;Length (along first dimension) of tensors must be the same when appending&#34;)
-
         # Check that all named tensors exist, and have the right first dimension
         for name in vals.keys():
                 if name_exists(tr, wsm, name) != &#34;Tensor&#34;:
@@ -276,7 +420,7 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
                 tensors[name] = wsm[name]  # type: ignore
                 if tensors[name].rank == 0 or tensors[name].dims[0] != dname:
                         raise ValueError(f&#34;Tensor &#39;{name}&#39; does not have &#39;{dname}&#39; as first dimension&#34;)
-        
+
         # Check that all relevant tensors have been included in the values
         all_tensors: List[str] = [subspace[&#34;tensors&#34;].unpack(k)[0] for k,v in tr[subspace[&#34;tensors&#34;].range()]]
         for tensor_name in all_tensors:
@@ -285,36 +429,43 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
                         if tensor.rank != 0 and tensor.dims[0] == dname:
                                 raise ValueError(f&#34;Tensor &#39;{tensor.assigned_name}&#39; missing from values in append operation&#34;)
 
-        # Check the rank of the inits
+        # Check the rank of the values
         for name, values in vals.items():
                 if tensors[name].jagged:
-                        for j in values:
-                                if tensors[name].rank != values.ndim + 1:  # type: ignore
-                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; rank {tensors[name].rank} cannot be initialized with rank-{values.ndim + 1} array&#34;)  # type: ignore
+                        for row in values:
+                                if tensors[name].rank != row.ndim + 1:  # type: ignore
+                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; of rank {tensors[name].rank} cannot be initialized with rank-{row.ndim + 1} array&#34;)  # type: ignore
                 else:
                         if tensors[name].rank != values.ndim:  # type: ignore
-                                raise ValueError(f&#34;Tensor &#39;{name}&#39; rank {tensors[name].rank} cannot be initialized with rank-{values.ndim} array&#34;)  # type: ignore
+                                raise ValueError(f&#34;Tensor &#39;{name}&#39; of rank {tensors[name].rank} cannot be initialized with rank-{values.ndim} array&#34;)  # type: ignore
 
-        # Check that all the other dimensions match their definitions
+        # Check that all the other dimensions are the correct shape according to their definitions
         for name, values in vals.items():
                 for i, idim in enumerate(tensors[name].dims):
-                        if idim is None:
+                        if i == 0 or idim is None:
                                 continue
-                        if isinstance(idim, str):  # Named dimension
-                                dim: shoji.Dimension = wsm[idim]  # type: ignore # TODO: check that this runs in the same transaction
-                                if dim.size is not None:
-                                        if tensors[name].jagged:
-                                                for j in values:
-                                                        if dim.size != values[j].shape[i - 1]:
-                                                                raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension &#39;{idim}&#39; must be exactly {dim.size} elements long&#34;)
-                                        else:
-                                                if dim.size != values.shape[i]:  # type: ignore
-                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension &#39;{idim}&#39; must be exactly {dim.size} elements long&#34;)
-
-        # Finally, write the values
+                        elif isinstance(idim, int):  # Anonymous fixed-shape dimension
+                                pass  # This constraint was already checked when the tensor was created
+                        elif isinstance(idim, str):  # Named dimension
+                                dim: shoji.Dimension = wsm[idim]  # type: ignore
+                                if dim.shape is None:
+                                        continue
+                                if tensors[name].jagged:
+                                        for row in values:
+                                                if row.shape[i] != dim.shape: 
+                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension &#39;{idim}&#39; must be exactly {dim.shape} elements long&#34;)
+                                elif dim.shape != values.shape[i]:  # type: ignore
+                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {dim.shape} elements long&#34;)
+                                
+        # Write the values
         for name, values in vals.items():
                 tensors[name].inits = values
                 write_tensor_values(tr, wsm, name, tensors[name])
+
+        # Update the first dimension
+        dim = wsm[dname]  # type: ignore
+        dim.length = dim.length + len(values)
+        create_or_update_dimension(tr, wsm, dname, dim)
 
 
 def __nil__():
@@ -373,14 +524,6 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
         subspace = wsm._subspace
         tensors: Dict[str, shoji.Tensor] = {}
 
-        # Check that all the values have same length
-        n_values = -1
-        for values in vals.values():
-                if n_values == -1:
-                        n_values = len(values)
-                elif len(values) != n_values:
-                        raise ValueError(f&#34;Length (along first dimension) of tensors must be the same when appending&#34;)
-
         # Check that all named tensors exist, and have the right first dimension
         for name in vals.keys():
                 if name_exists(tr, wsm, name) != &#34;Tensor&#34;:
@@ -388,7 +531,7 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
                 tensors[name] = wsm[name]  # type: ignore
                 if tensors[name].rank == 0 or tensors[name].dims[0] != dname:
                         raise ValueError(f&#34;Tensor &#39;{name}&#39; does not have &#39;{dname}&#39; as first dimension&#34;)
-        
+
         # Check that all relevant tensors have been included in the values
         all_tensors: List[str] = [subspace[&#34;tensors&#34;].unpack(k)[0] for k,v in tr[subspace[&#34;tensors&#34;].range()]]
         for tensor_name in all_tensors:
@@ -397,36 +540,87 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
                         if tensor.rank != 0 and tensor.dims[0] == dname:
                                 raise ValueError(f&#34;Tensor &#39;{tensor.assigned_name}&#39; missing from values in append operation&#34;)
 
-        # Check the rank of the inits
+        # Check the rank of the values
         for name, values in vals.items():
                 if tensors[name].jagged:
-                        for j in values:
-                                if tensors[name].rank != values.ndim + 1:  # type: ignore
-                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; rank {tensors[name].rank} cannot be initialized with rank-{values.ndim + 1} array&#34;)  # type: ignore
+                        for row in values:
+                                if tensors[name].rank != row.ndim + 1:  # type: ignore
+                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; of rank {tensors[name].rank} cannot be initialized with rank-{row.ndim + 1} array&#34;)  # type: ignore
                 else:
                         if tensors[name].rank != values.ndim:  # type: ignore
-                                raise ValueError(f&#34;Tensor &#39;{name}&#39; rank {tensors[name].rank} cannot be initialized with rank-{values.ndim} array&#34;)  # type: ignore
+                                raise ValueError(f&#34;Tensor &#39;{name}&#39; of rank {tensors[name].rank} cannot be initialized with rank-{values.ndim} array&#34;)  # type: ignore
 
-        # Check that all the other dimensions match their definitions
+        # Check that all the other dimensions are the correct shape according to their definitions
         for name, values in vals.items():
                 for i, idim in enumerate(tensors[name].dims):
-                        if idim is None:
+                        if i == 0 or idim is None:
                                 continue
-                        if isinstance(idim, str):  # Named dimension
-                                dim: shoji.Dimension = wsm[idim]  # type: ignore # TODO: check that this runs in the same transaction
-                                if dim.size is not None:
-                                        if tensors[name].jagged:
-                                                for j in values:
-                                                        if dim.size != values[j].shape[i - 1]:
-                                                                raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension &#39;{idim}&#39; must be exactly {dim.size} elements long&#34;)
-                                        else:
-                                                if dim.size != values.shape[i]:  # type: ignore
-                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension &#39;{idim}&#39; must be exactly {dim.size} elements long&#34;)
-
-        # Finally, write the values
+                        elif isinstance(idim, int):  # Anonymous fixed-shape dimension
+                                pass  # This constraint was already checked when the tensor was created
+                        elif isinstance(idim, str):  # Named dimension
+                                dim: shoji.Dimension = wsm[idim]  # type: ignore
+                                if dim.shape is None:
+                                        continue
+                                if tensors[name].jagged:
+                                        for row in values:
+                                                if row.shape[i] != dim.shape: 
+                                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension &#39;{idim}&#39; must be exactly {dim.shape} elements long&#34;)
+                                elif dim.shape != values.shape[i]:  # type: ignore
+                                        raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {dim.shape} elements long&#34;)
+                                
+        # Write the values
         for name, values in vals.items():
                 tensors[name].inits = values
-                write_tensor_values(tr, wsm, name, tensors[name])</code></pre>
+                write_tensor_values(tr, wsm, name, tensors[name])
+
+        # Update the first dimension
+        dim = wsm[dname]  # type: ignore
+        dim.length = dim.length + len(values)
+        create_or_update_dimension(tr, wsm, dname, dim)</code></pre>
+</details>
+</dd>
+<dt id="shoji.io.coerce_dtype"><code class="name flex">
+<span>def <span class="ident">coerce_dtype</span></span>(<span>dtype, v) -> Union[int, float, bool, str]</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def coerce_dtype(dtype, v) -&gt; Union[int, float, bool, str]:
+        if dtype in (&#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;):
+                return int(v)
+        elif dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
+                return float(v)
+        elif dtype == &#34;bool&#34;:
+                return bool(v)
+        elif dtype == &#34;string&#34;:
+                return str(v)
+        else:
+                raise TypeError()</code></pre>
+</details>
+</dd>
+<dt id="shoji.io.compute_ranges"><code class="name flex">
+<span>def <span class="ident">compute_ranges</span></span>(<span>elements)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@numba.jit
+def compute_ranges(elements):
+    elements = np.sort(elements)
+    ranges = []
+    start = elements[0]
+    for ix in range(1, len(elements)):
+        if elements[ix] != elements[ix - 1] + 1:
+            ranges.append((start, elements[ix - 1]))
+            start = elements[ix]
+    ranges.append((start, elements[-1]))
+    return ranges</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.const_compare"><code class="name flex">
@@ -464,6 +658,31 @@ def const_compare(tr, wsm: shoji.WorkspaceManager, name: str, operator: str, con
         return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)</code></pre>
 </details>
 </dd>
+<dt id="shoji.io.create_or_update_dimension"><code class="name flex">
+<span>def <span class="ident">create_or_update_dimension</span></span>(<span>tr, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, name: str, dim: <a title="shoji.dimension.Dimension" href="dimension.html#shoji.dimension.Dimension">Dimension</a>)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@fdb.transactional
+def create_or_update_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: shoji.Dimension):
+        subspace = wsm._subspace
+        # Check that name doesn&#39;t already exist
+        existing_name = name_exists(tr, wsm, name)
+        if existing_name is not None:
+                if existing_name != &#34;Dimension&#34;:
+                        raise AttributeError(f&#34;Name already exists (as {existing_name})&#34;)
+                # Update an existing dimension
+                prev_dim: shoji.Dimension = read_entity(tr, wsm, name)
+                if prev_dim.shape != dim.shape:
+                        raise AttributeError(f&#34;Cannot modify shape of existing dimension &#39;{name}&#39;&#34;)
+        # Create or update the dimension
+        tr[subspace[&#34;dimensions&#34;][name]] = (dim.shape if dim.shape is not None else -1).to_bytes(8, &#34;little&#34;, signed=True) + dim.length.to_bytes(8, &#34;little&#34;, signed=False)</code></pre>
+</details>
+</dd>
 <dt id="shoji.io.create_tensor"><code class="name flex">
 <span>def <span class="ident">create_tensor</span></span>(<span>tr: fdb.impl.Transaction, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, name: str, tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>) -> NoneType</span>
 </code></dt>
@@ -483,22 +702,18 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
         # Check that the dimensions of the tensor exist
         for ix, d in enumerate(tensor.dims):
                 if isinstance(d, str):
-                        temp = wsm[d]
-                        if isinstance(temp, shoji.Dimension):
-                                dim = temp
-                                # Check that the dimensions of the tensor match the shape of the tensor
-                                if dim.size is not None:
-                                        if tensor.inits is not None and tensor.shape[ix] != dim.size:
-                                                raise IndexError(f&#34;Mismatch between the declared size {dim.size} of dimension &#39;{d}&#39; and the shape {tensor.shape} of values&#34;)
+                        dim = wsm[d]
+                        assert isinstance(dim, shoji.Dimension)
+                        # Check that the dimensions of the tensor match the shape of the tensor
+                        if dim.shape is None:
+                                if ix &gt; 0:
+                                        tensor.jagged = True
                         else:
-                                raise AttributeError(d)
-        # Create the tensor with its initial data (if provided)
-        # TODO: handle chunking
+                                if tensor.inits is not None and tensor.shape[ix] != dim.shape:
+                                        raise IndexError(f&#34;Mismatch between the declared shape {dim.shape} of dimension &#39;{d}&#39; and the shape {tensor.shape} of values&#34;)
         # Store tensor definition
-        length = 0
-        # if tensor.inits is not None and not np.ndim(tensor.inits) == 0:
-        #       length = len(tensor.inits)
-        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (0, length)
+        # (&#34;tensors&#34;, name, dtype, rank) + dims + (jagged, length)
+        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (1 if tensor.jagged else 0, 0)
         key = subspace.pack(key_tuple)
         tr[key] = b&#39;&#39;</code></pre>
 </details>
@@ -545,29 +760,8 @@ def name_exists(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str
         return None</code></pre>
 </details>
 </dd>
-<dt id="shoji.io.ranges"><code class="name flex">
-<span>def <span class="ident">ranges</span></span>(<span>elements)</span>
-</code></dt>
-<dd>
-<div class="desc"></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">@numba.jit
-def ranges(elements):
-    ranges = []
-    start = 0
-    for ix in range(1, len(elements)):
-        if elements[ix] != elements[ix - 1] + 1:
-            ranges.append((start, ix - 1))
-            start = ix
-    ranges.append((start, len(elements)))
-    return ranges</code></pre>
-</details>
-</dd>
-<dt id="shoji.io.read_chunked_row"><code class="name flex">
-<span>def <span class="ident">read_chunked_row</span></span>(<span>tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int) -> bytes</span>
+<dt id="shoji.io.read_chunked_rows"><code class="name flex">
+<span>def <span class="ident">read_chunked_rows</span></span>(<span>tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int, j: int, codec: <a title="shoji.codec.Codec" href="codec.html#shoji.codec.Codec">Codec</a>) -> List[numpy.ndarray]</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -576,16 +770,21 @@ def ranges(elements):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">@fdb.transactional
-def read_chunked_row(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int) -&gt; bytes:
+def read_chunked_rows(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int, j: int, codec: shoji.Codec) -&gt; List[np.ndarray]:
+        start = subspace.range((&#34;tensor_values&#34;, name, i)).start
+        stop = subspace.range((&#34;tensor_values&#34;, name, j)).stop
+        result = []
+        ix = i
         encoded = bytearray()
-        j = 0
-        while True:
-                chunk = tr[subspace.pack((&#34;tensor_values&#34;, name, i, j))]
-                if not chunk.present():
-                        break
-                encoded += chunk.value
-                j += 1
-        return bytes(encoded)</code></pre>
+        for k, v in tr.get_range(start, stop):
+                row = subspace.unpack(k)[-2]
+                if row != ix:
+                        result.append(codec.decode(bytes(encoded)))
+                        encoded = bytearray()
+                        ix = row
+                encoded += v
+        result.append(codec.decode(bytes(encoded)))
+        return result</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.read_entity"><code class="name flex">
@@ -604,16 +803,18 @@ def read_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str
                 child = subspace.open(tr, name)
                 return shoji.WorkspaceManager(wsm._db, child, wsm._path + (name,))
         elif tr[subspace[&#34;dimensions&#34;][name]].present():
-                dim = shoji.Dimension(size=int.from_bytes(tr[subspace[&#34;dimensions&#34;][name]], &#34;little&#34;, signed=True))
+                val = tr[subspace[&#34;dimensions&#34;][name]]
+                dim = shoji.Dimension(shape=int.from_bytes(val[:8], &#34;little&#34;, signed=True), length=int.from_bytes(val[8:], &#34;little&#34;, signed=False))
                 dim.assigned_name = name
                 dim.wsm = wsm
                 return dim
         else:
-                # key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (1 if tensor.chunked else 0, len(tensor.inits))
+                # key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (jagged, length)
                 tensor_tuples = tr[subspace.range((&#34;tensors&#34;, name))]
                 for k, _ in tensor_tuples:
                         key = subspace.unpack(k)
                         tensor = shoji.Tensor(key[2], key[4:4+key[3]], length=key[-1])
+                        tensor.jagged = key[-2] == 1
                         tensor.assigned_name = name
                         tensor.wsm = wsm
                         return tensor
@@ -631,31 +832,43 @@ def read_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str
 </summary>
 <pre><code class="python">@fdb.transactional
 def read_filtered_tensor(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, tensor: shoji.Tensor, indices: np.ndarray = None) -&gt; np.ndarray:
-        # TODO: read in row-ranges to avoid transaction byte limit
-        # TODO: use range reads where possible to improve performance
-        # TODO: use segmented reads https://apple.github.io/foundationdb/segmented-range-reads.html
         assert tensor.length is not None
+        # Convert the list of indices to ranges as far as possible
         if indices is None:
-                indices = np.arange(tensor.length)
+                ranges = [(0, tensor.length)]
+                n_rows = tensor.length
+        else:
+                ranges = compute_ranges(indices)
+                n_rows = len(indices)
         codec = shoji.Codec(tensor.dtype)
-        n_rows = indices.shape[0]
+
         if tensor.jagged:
-                resultj = []
-                for i in indices:
-                        resultj.append(codec.decode(read_chunked_row(tr, subspace, name, i)))
+                resultj: List[np.ndarray] = []
+                for (start, stop) in ranges:
+                        resultj += read_chunked_rows(tr, subspace, name, start, stop, codec)
                 return resultj
         else:
-                result = None
-                for i, j in enumerate(indices):
-                        row = codec.decode(read_chunked_row(tr, subspace, name, i))
-                        if result is None:
-                                result = np.empty((n_rows,) + row.shape, dtype=row.dtype)
-                        result[i] = row
+                if tensor.rank == 1:
+                        result = np.empty(n_rows, dtype=tensor.numpy_dtype())
+                        ix = 0
+                        for (start, stop) in ranges:
+                                rows = read_unchunked_rows(tr, subspace, name, start, stop, dtype=tensor.dtype)
+                                result[ix: ix + (stop - start + 1)] = rows
+                                ix += stop - start + 1
+                else:
+                        result = None
+                        ix = 0
+                        for start, stop in ranges:
+                                rows = read_chunked_rows(tr, subspace, name, start, stop, codec)
+                                if result is None:
+                                        result = np.empty((n_rows,) + rows[0].shape, dtype=rows[0].dtype)
+                                result[ix: ix + (stop - start + 1)] = np.array(rows)
+                                ix += (stop - start + 1)
         return result</code></pre>
 </details>
 </dd>
-<dt id="shoji.io.write_dimension"><code class="name flex">
-<span>def <span class="ident">write_dimension</span></span>(<span>tr, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, name: str, dim: <a title="shoji.dimension.Dimension" href="dimension.html#shoji.dimension.Dimension">Dimension</a>)</span>
+<dt id="shoji.io.read_unchunked_rows"><code class="name flex">
+<span>def <span class="ident">read_unchunked_rows</span></span>(<span>tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int, j: int, dtype: str) -> Union[List[float], List[int], List[str], List[bool]]</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -664,14 +877,117 @@ def read_filtered_tensor(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.S
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">@fdb.transactional
-def write_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: shoji.Dimension):
+def read_unchunked_rows(tr: fdb.impl.Transaction, subspace: fdb.subspace_impl.Subspace, name: str, i: int, j: int, dtype: str) -&gt; Union[List[float], List[int], List[str], List[bool]]:
+        start = subspace.range((&#34;tensor_values&#34;, name, i)).start
+        stop = subspace.range((&#34;tensor_values&#34;, name, j)).stop
+        vals = [v for _,v in tr.get_range(start, stop)]
+        if dtype == &#34;string&#34;:
+                return [x.decode() for x in vals]
+        if dtype == &#34;float32&#34;:
+                return [struct.unpack(&#34;f&#34;, x)[0] for x in vals]
+        if dtype == &#34;float64&#34;:
+                return [struct.unpack(&#34;d&#34;, x)[0] for x in vals]
+        if dtype == &#34;bool&#34;:
+                return [bool(int.from_bytes(x, &#34;little&#34;, signed=False)) for x in vals]
+        signed = True
+        if dtype[0] == &#34;u&#34;:
+                signed = False
+        return [int.from_bytes(x, &#34;little&#34;, signed=signed) for x in vals]</code></pre>
+</details>
+</dd>
+<dt id="shoji.io.update_tensor_values"><code class="name flex">
+<span>def <span class="ident">update_tensor_values</span></span>(<span>tr: fdb.impl.Transaction, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, name: str, indices: Tuple[slice, numpy.ndarray], tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>) -> NoneType</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@fdb.transactional
+def update_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, indices: Tuple[slice, np.ndarray], tensor: shoji.Tensor) -&gt; None:
+        CHUNK_SIZE = 1_000
         subspace = wsm._subspace
-        # Check that name doesn&#39;t already exist
-        existing_name = name_exists(tr, wsm, name)
-        if existing_name is not None:
-                raise AttributeError(f&#34;Name already exists (as {existing_name})&#34;)
-        # Create the dimension
-        tr[subspace[&#34;dimensions&#34;][name]] = (dim.size if dim.size is not None else -1).to_bytes(8, &#34;little&#34;, signed=True)</code></pre>
+        codec = shoji.Codec(tensor.dtype)
+        # Better read the tensor metadata again inside the transaction
+        temp = tensor.inits
+        tensor: shoji.Tensor = wsm[name]
+        tensor.inits = temp
+
+        if isinstance(indices[0], slice):
+                s = indices[0].indices(tensor.length)
+                rows = np.arange(s[0], s[1], s[2])
+        else:
+                rows = indices[0]
+
+        if np.ndim(tensor.inits) == 0:  # It&#39;s a scalar value
+                assert len(indices) != 0, &#34;Cannot index scalar value&#34;
+                key = subspace.pack((&#34;tensor_values&#34;, name) + (0, 0))
+                tr[key] = codec.encode(np.array(tensor.inits))
+        else:
+                # Read the current data that we want to modify
+                if isinstance(indices[0], slice):
+                        prev = read_filtered_tensor(tr, subspace, name, tensor, np.arange(indices[0].start, indices[0].stop, indices[0].step))
+                else:
+                        prev = read_filtered_tensor(tr, subspace, name, tensor, indices[0])
+
+                # Modify the data row by row (in case the tensor is jagged)
+                for ix in range(len(prev)):
+                        row = prev[ix]
+                        
+                        if tensor.rank == 1:
+                                # Remove index entries
+                                key = subspace.pack((&#34;tensor_indexes&#34;, name, coerce_dtype(tensor.dtype, row), int(rows[ix])))
+                                del tr[key]
+                                prev[ix] = tensor.inits[ix]
+                        else:
+                                # Expand any slices in the indices
+                                actual_indices = []
+                                for i, ind in enumerate(indices[1:]):
+                                        if isinstance(ind, slice):
+                                                s = ind.indices(prev.shape[i + 1])
+                                                actual_indices.append(np.arange(s[0], s[1], s[2]))
+                                        else:
+                                                actual_indices.append(ind)
+                                row[actual_indices] = tensor.inits
+
+                # Now save the tensor back to the appropriate rows
+                if tensor.rank == 1:
+                        for i, j in enumerate(rows):
+                                key = subspace.pack((&#34;tensor_values&#34;, name, int(j), 0))
+                                x = tensor.inits[i]
+                                if tensor.dtype == &#34;string&#34;:
+                                        tr[key] = x.encode()
+                                elif tensor.dtype == &#34;float32&#34;:
+                                        tr[key] = struct.pack(&#34;f&#34;, x)
+                                elif tensor.dtype == &#34;float64&#34;:
+                                        tr[key] = struct.pack(&#34;d&#34;, x)
+                                elif tensor.dtype == &#34;uint16&#34;:
+                                        tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=False)
+                                elif tensor.dtype == &#34;uint32&#34;:
+                                        tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=False)
+                                elif tensor.dtype == &#34;uint64&#34;:
+                                        tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=False)
+                                elif tensor.dtype == &#34;int16&#34;:
+                                        tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=True)
+                                elif tensor.dtype == &#34;int32&#34;:
+                                        tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=True)
+                                elif tensor.dtype == &#34;int64&#34;:
+                                        tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=True)
+                                elif tensor.dtype == &#34;bool&#34;:
+                                        tr[key] = int(x).to_bytes(1, &#34;little&#34;, signed=False)
+
+                        # Create index entries
+                        values = [coerce_dtype(tensor.dtype, v) for v in tensor.inits]
+                        for i, value in enumerate(values):
+                                key = subspace.pack((&#34;tensor_indexes&#34;, name, value, int(rows[i])))
+                                tr[key] = b&#39;&#39;
+                else:
+                        for i, j in enumerate(rows):
+                                encoded = codec.encode(np.array(tensor.inits[i]))
+                                for k in range(0, len(encoded), CHUNK_SIZE):
+                                        key = subspace.pack((&#34;tensor_values&#34;, name, int(j), k // CHUNK_SIZE))
+                                        tr[key] = encoded[k:k + CHUNK_SIZE]</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.write_tensor_values"><code class="name flex">
@@ -685,43 +1001,58 @@ def write_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: shoji.Dimen
 </summary>
 <pre><code class="python">@fdb.transactional
 def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -&gt; None:
-        # TODO: write in row-ranges to avoid transaction byte limit
         CHUNK_SIZE = 1_000
         subspace = wsm._subspace
         if tensor.inits is not None:
                 codec = shoji.Codec(tensor.dtype)
                 if np.ndim(tensor.inits) == 0:  # It&#39;s a scalar value
                         key = subspace.pack((&#34;tensor_values&#34;, name) + (0, 0))
-                        #tr[key] = blosc.pack_array(np.array(tensor.inits))
                         tr[key] = codec.encode(np.array(tensor.inits))
                 else:
                         # Update the length
                         old_length: int = wsm[name].length  # type: ignore
                         length = len(tensor.inits) + old_length  # type: ignore
                         tr.clear_range_startswith(subspace[&#34;tensors&#34;][name].key())
-                        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (0, length)
+                        key_tuple = (&#34;tensors&#34;, name, tensor.dtype, tensor.rank) + tensor.dims + (1 if tensor.jagged else 0, length)
                         key = subspace.pack(key_tuple)
                         tr[key] = b&#39;&#39;
-                        for i in range(len(tensor.inits)):
-                                encoded = codec.encode(np.array(tensor.inits[i]))
-                                for j in range(0, len(encoded), CHUNK_SIZE):
-                                        key = subspace.pack((&#34;tensor_values&#34;, name, i + old_length, j // CHUNK_SIZE))
-                                        tr[key] = encoded[j:j+CHUNK_SIZE]
                         if tensor.rank == 1:
+                                # Save the values unchunked
+                                for i in range(len(tensor.inits)):
+                                        key = subspace.pack((&#34;tensor_values&#34;, name, i + old_length, 0))
+                                        x = tensor.inits[i]
+                                        if tensor.dtype == &#34;string&#34;:
+                                                tr[key] = x.encode()
+                                        elif tensor.dtype == &#34;float32&#34;:
+                                                tr[key] = struct.pack(&#34;f&#34;, x)
+                                        elif tensor.dtype == &#34;float64&#34;:
+                                                tr[key] = struct.pack(&#34;d&#34;, x)
+                                        elif tensor.dtype == &#34;uint16&#34;:
+                                                tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=False)
+                                        elif tensor.dtype == &#34;uint32&#34;:
+                                                tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=False)
+                                        elif tensor.dtype == &#34;uint64&#34;:
+                                                tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=False)
+                                        elif tensor.dtype == &#34;int16&#34;:
+                                                tr[key] = int(x).to_bytes(2, &#34;little&#34;, signed=True)
+                                        elif tensor.dtype == &#34;int32&#34;:
+                                                tr[key] = int(x).to_bytes(4, &#34;little&#34;, signed=True)
+                                        elif tensor.dtype == &#34;int64&#34;:
+                                                tr[key] = int(x).to_bytes(8, &#34;little&#34;, signed=True)
+                                        elif tensor.dtype == &#34;bool&#34;:
+                                                tr[key] = int(x).to_bytes(1, &#34;little&#34;, signed=False)
+
                                 # Create an index
-                                if tensor.dtype in (&#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;):
-                                        values = [int(v) for v in tensor.inits]
-                                elif tensor.dtype in (&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;):
-                                        values = [float(v) for v in tensor.inits]
-                                elif tensor.dtype == &#34;bool&#34;:
-                                        values = [bool(v) for v in tensor.inits]
-                                elif tensor.dtype == &#34;string&#34;:
-                                        values = [str(v) for v in tensor.inits]
-                                else:
-                                        raise TypeError()
+                                values = [coerce_dtype(tensor.dtype, v) for v in tensor.inits]
                                 for i, value in enumerate(values):
                                         key = subspace.pack((&#34;tensor_indexes&#34;, name, value, int(i + old_length)))
-                                        tr[key] = b&#39;&#39;</code></pre>
+                                        tr[key] = b&#39;&#39;
+                        else:
+                                for i in range(len(tensor.inits)):
+                                        encoded = codec.encode(np.array(tensor.inits[i]))
+                                        for j in range(0, len(encoded), CHUNK_SIZE):
+                                                key = subspace.pack((&#34;tensor_values&#34;, name, i + old_length, j // CHUNK_SIZE))
+                                                tr[key] = encoded[j:j+CHUNK_SIZE]</code></pre>
 </details>
 </dd>
 </dl>
@@ -743,15 +1074,18 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 <li><h3><a href="#header-functions">Functions</a></h3>
 <ul class="">
 <li><code><a title="shoji.io.append_tensors" href="#shoji.io.append_tensors">append_tensors</a></code></li>
+<li><code><a title="shoji.io.coerce_dtype" href="#shoji.io.coerce_dtype">coerce_dtype</a></code></li>
+<li><code><a title="shoji.io.compute_ranges" href="#shoji.io.compute_ranges">compute_ranges</a></code></li>
 <li><code><a title="shoji.io.const_compare" href="#shoji.io.const_compare">const_compare</a></code></li>
+<li><code><a title="shoji.io.create_or_update_dimension" href="#shoji.io.create_or_update_dimension">create_or_update_dimension</a></code></li>
 <li><code><a title="shoji.io.create_tensor" href="#shoji.io.create_tensor">create_tensor</a></code></li>
 <li><code><a title="shoji.io.delete_entity" href="#shoji.io.delete_entity">delete_entity</a></code></li>
 <li><code><a title="shoji.io.name_exists" href="#shoji.io.name_exists">name_exists</a></code></li>
-<li><code><a title="shoji.io.ranges" href="#shoji.io.ranges">ranges</a></code></li>
-<li><code><a title="shoji.io.read_chunked_row" href="#shoji.io.read_chunked_row">read_chunked_row</a></code></li>
+<li><code><a title="shoji.io.read_chunked_rows" href="#shoji.io.read_chunked_rows">read_chunked_rows</a></code></li>
 <li><code><a title="shoji.io.read_entity" href="#shoji.io.read_entity">read_entity</a></code></li>
 <li><code><a title="shoji.io.read_filtered_tensor" href="#shoji.io.read_filtered_tensor">read_filtered_tensor</a></code></li>
-<li><code><a title="shoji.io.write_dimension" href="#shoji.io.write_dimension">write_dimension</a></code></li>
+<li><code><a title="shoji.io.read_unchunked_rows" href="#shoji.io.read_unchunked_rows">read_unchunked_rows</a></code></li>
+<li><code><a title="shoji.io.update_tensor_values" href="#shoji.io.update_tensor_values">update_tensor_values</a></code></li>
 <li><code><a title="shoji.io.write_tensor_values" href="#shoji.io.write_tensor_values">write_tensor_values</a></code></li>
 </ul>
 </li>

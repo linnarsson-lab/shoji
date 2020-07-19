@@ -47,10 +47,10 @@ class Tensor:
                         Dimensions are specified as:
 
                                 None:           resizable/jagged anonymous dimension
-                                int:            fixed-size anonymous dimension
+                                int:            fixed-shape anonymous dimension
                                 string:         named dimension
                         
-                        The first dimension can be fixed-size or resizable; all other dimensions can be fixed-size or jagged. 
+                        The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
                 &#34;&#34;&#34;
                 self.dtype = dtype
                 self.length = length  # Length is the actual length as stored (or None if unknown)
@@ -59,14 +59,14 @@ class Tensor:
                         raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
 
                 self.dims = dims
-
+        
                 self.assigned_name = &#34;&#34;  # Will be set if the Tensor is read from the db
                 self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
                 self.inits = inits
                 if self.inits is None:
                         self.jagged = False
-                        self.shape = self.dims
+                        self.shape = None
                 else:
                         # If scalar, convert to an ndarray scalar which will have shape ()
                         if np.isscalar(self.inits):
@@ -99,7 +99,7 @@ class Tensor:
 
                         if isinstance(dim, int) and self.inits is not None:
                                 if self.shape[ix] != dim:  # type: ignore
-                                        raise IndexError(f&#34;Mismatch between the declared size {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
+                                        raise IndexError(f&#34;Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
                 self.rank = len(self.dims)
 
         def numpy_dtype(self) -&gt; str:
@@ -180,10 +180,10 @@ class Tensor:
 <h2 id="remarks">Remarks</h2>
 <p>Dimensions are specified as:</p>
 <pre><code>    None:           resizable/jagged anonymous dimension
-    int:            fixed-size anonymous dimension
+    int:            fixed-shape anonymous dimension
     string:         named dimension
 </code></pre>
-<p>The first dimension can be fixed-size or resizable; all other dimensions can be fixed-size or jagged.</p></div>
+<p>The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged.</p></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -202,10 +202,10 @@ class Tensor:
                         Dimensions are specified as:
 
                                 None:           resizable/jagged anonymous dimension
-                                int:            fixed-size anonymous dimension
+                                int:            fixed-shape anonymous dimension
                                 string:         named dimension
                         
-                        The first dimension can be fixed-size or resizable; all other dimensions can be fixed-size or jagged. 
+                        The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
                 &#34;&#34;&#34;
                 self.dtype = dtype
                 self.length = length  # Length is the actual length as stored (or None if unknown)
@@ -214,14 +214,14 @@ class Tensor:
                         raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
 
                 self.dims = dims
-
+        
                 self.assigned_name = &#34;&#34;  # Will be set if the Tensor is read from the db
                 self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
                 self.inits = inits
                 if self.inits is None:
                         self.jagged = False
-                        self.shape = self.dims
+                        self.shape = None
                 else:
                         # If scalar, convert to an ndarray scalar which will have shape ()
                         if np.isscalar(self.inits):
@@ -254,7 +254,7 @@ class Tensor:
 
                         if isinstance(dim, int) and self.inits is not None:
                                 if self.shape[ix] != dim:  # type: ignore
-                                        raise IndexError(f&#34;Mismatch between the declared size {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
+                                        raise IndexError(f&#34;Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
                 self.rank = len(self.dims)
 
         def numpy_dtype(self) -&gt; str:

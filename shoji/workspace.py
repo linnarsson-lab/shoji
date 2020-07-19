@@ -78,6 +78,9 @@ del db.scRNA
 """
 from typing import Any, Tuple, Union, List
 import fdb
+import logging
+from tqdm import trange
+import loompy
 import shoji
 
 
@@ -93,10 +96,11 @@ class WorkspaceManager:
 	"""
 	Class for managing workspaces. You should not create WorkspaceManager objects yourself.
 	"""
-	def __init__(self, db: fdb.impl.Database, subspace: fdb.directory_impl.DirectorySubspace, path: Union[Tuple, Tuple[str]]) -> None:
+	def __init__(self, db: fdb.impl.Database, subspace: fdb.directory_impl.DirectorySubspace, path: Union[Tuple, Tuple[str, ...]]) -> None:
 		self._db = db
 		self._subspace = subspace
 		self._path = path
+		self._name: str = ""
 
 	def _move_to(self, new_path: Union[str, Tuple[str]]) -> None:
 		if not isinstance(new_path, tuple):
@@ -110,18 +114,39 @@ class WorkspaceManager:
 		subspace = self._subspace.create(self._db.transaction, path)
 		return WorkspaceManager(self._db.transaction, subspace, self._path + path)
 
+	def _workspaces(self) -> List[str]:
+		return self._subspace.list(self._db.transaction)
+
+	def _dimensions(self) -> List[str]:
+		return [self._subspace["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["dimensions"].range()]]
+
+	def _tensors(self) -> List[str]:
+		return [self._subspace["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["tensors"].range()]]
+
 	def __dir__(self) -> List[str]:
 		dimensions = [self._subspace["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["dimensions"].range()]]
 		tensors = [self._subspace["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["tensors"].range()]]
 		return self._subspace.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
+	def __iter__(self):
+		for s in self._subspace.list(self._db.transaction):
+			yield self[s]
+		dimensions = [self._subspace["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["dimensions"].range()]]
+		for d in dimensions:
+			yield self[d]
+		tensors = [self._subspace["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["tensors"].range()]]
+		for t in tensors:
+			yield self[t]
+
 	def __contains__(self, name: str) -> bool:
-		return shoji.io.read_entity(self._db.transaction, self, name) != None
+		return shoji.io.get_entity(self._db.transaction, self, name) is not None
 
 	def __getattr__(self, name: str) -> Union["WorkspaceManager", shoji.Dimension, shoji.Tensor]:
-		result = shoji.io.read_entity(self._db.transaction, self, name)
+		if name.startswith("__"):  # Jupyter calls this method with name = "__wrapped__" and we want to avoid a futile database roundtrip
+			return super().__getattribute__(name)
+		result = shoji.io.get_entity(self._db.transaction, self, name)
 		if result is None:
-			raise AttributeError(name)
+			return super().__getattribute__(name)
 		else:
 			return result
 
@@ -135,9 +160,12 @@ class WorkspaceManager:
 		elif isinstance(expr, tuple) and isinstance(expr[0], shoji.Filter):
 			return shoji.View(self, expr)
 		# Or a slice?
-		if isinstance(expr, slice) and expr.start is None and expr.stop is None:
-			return shoji.View(self, ())
-		raise IndexError()
+		if isinstance(expr, slice):
+			if expr.start is None and expr.stop is None:
+				return shoji.View(self, ())
+			else:
+				raise KeyError("Cannot slice workspace directly (use a slice on a dimension instead)")
+		raise KeyError(f"Invalid key '{expr}' (only filter expression or : allowed)")
 
 	def __setattr__(self, name: str, value: Any) -> None:
 		if isinstance(value, Workspace):
@@ -152,28 +180,23 @@ class WorkspaceManager:
 			# Check that the first letter is uppercase
 			if not name[0].isupper():
 				raise AttributeError("Tensor name must begin with an uppercase letter")
-			with shoji.Transaction(self):
-				shoji.io.create_tensor(self._db.transaction, self, name, tensor)
-				# Check all the dimension constraints
-				for i, tdim in enumerate(tensor.dims):
-					if isinstance(tensor.dims[0], str):
-						dim = self[tensor.dims[i]]
-						assert isinstance(dim, shoji.Dimension)
-						if dim.shape is not None:
-							if tensor.inits is None:
-								raise ValueError(f"Tensor '{name}' with fixed-shape dimension {i} ('{tensor.dims[i]}') must be initialized when created")
-							else:
-								if tensor.jagged:
-									for row in tensor.inits:
-										if row.shape[i] != dim.shape:
-											raise ValueError(f"Tensor '{name}' dimension {i} ('{tensor.dims[i]}') must be exactly {dim.shape} elements long")
-								elif dim.shape != tensor.inits.shape[i]:  # type: ignore
-									raise ValueError(f"Tensor '{name}' dimension {i} ('{tensor.dims[i]}') must be exactly {dim.shape} elements long")
-				if tensor.inits is not None:
-					if tensor.rank > 0 and isinstance(tensor.dims[0], str) and self[tensor.dims[0]].length == 0:
+
+			# Note, this can fail as follows:
+			#  * Before anything has been written
+			#  * After the tensor has been full created but no values have been written
+			#  * After one or more rows have been fully written (consistent with other tensors in the dimension)
+			#  * After all rows have been fully written
+			# In each case, the database state will be consistent
+			shoji.io.create_or_update_tensor(self._db.transaction, self, name, tensor)
+			if tensor.inits is not None:
+				dim = None
+				if tensor.rank > 0 and isinstance(tensor.dims[0], str):
+					dim = shoji.io.get_dimension(self._db.transaction, self, tensor.dims[0])
+					if dim is not None:
+						# This ensures that all dimension constraints are properly checked
 						shoji.io.append_tensors(self._db.transaction, self, tensor.dims[0], {name: tensor.inits})
-					else:
-						shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
+						return
+				shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
 		else:
 			super().__setattr__(name, value)
 	
@@ -183,6 +206,64 @@ class WorkspaceManager:
 	def __delattr__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
+	def __delitem__(self, name: str) -> None:
+		shoji.io.delete_entity(self._db.transaction, self, name)
+
+	def from_loom(self, f: str, layers: List[str] = None) -> None:
+		with loompy.connect(f, validate=False) as ds:
+			if layers is None:
+				layers = list(ds.layers.keys())
+			self.genes = shoji.Dimension(shape=None)
+			self.cells = shoji.Dimension(shape=None)
+
+			STEP = 2000
+			logging.info("Loading row attributes")
+			for i in trange(0, ds.shape[0], STEP):
+				d = {}
+				for key, vals in ds.ra.items():
+					dtype = vals.dtype.name
+					name = key[0].upper() + key[1:]
+					d[name] = ds.ra[key][i:i + STEP]
+					if i == 0:
+						dims = ("genes", ) + (None,) * (vals.ndim - 1)
+						self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
+				self.genes.append(d)
+
+			self.genes = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
+			
+			skipped = [x for x in ds.ca.keys() if x in ds.ra.keys()]
+			for key, vals in ds.ca.items():
+				dtype = ds.ca[key].dtype.name
+				name = key[0].upper() + key[1:]
+				dims = ("cells", ) + (None,) * (vals.ndim - 1)
+				if name in skipped:
+					logging.warning(f"Column attribute '{name}' skipped because a row attribute already exists with that name.")
+					skipped.append(name)
+				else:
+					self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
+
+			logging.info("Loading column attributes and matrix layers")
+			STEP = 200
+			for i in trange(0, ds.shape[1], STEP):
+				d = {}
+				for key in ds.ca.keys():
+					name = key[0].upper() + key[1:]
+					if name in skipped:
+						continue
+					d[name] = ds.ca[key][i:i + STEP]
+				for key in layers:
+					if key not in ds.layers:
+						raise KeyError(f"Layer '{key}' not found")
+					if key == "":
+						name = "Expression"
+					else:
+						name = key[0].upper() + key[1:]
+					dtype = ds.layers[key].dtype.name
+					if i == 0:
+						self[name] = shoji.Tensor("string" if dtype == "object" else dtype, ("cells", "genes"))
+					d[name] = ds.layers[key][:, i:i + STEP].T
+				self.cells.append(d)
+			
 	def __repr__(self) -> str:
 		subspaces = self._subspace.list(self._db.transaction)
 		dimensions = [self._subspace["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["dimensions"].range()]]
@@ -194,4 +275,58 @@ class WorkspaceManager:
 			s += f"\n  {dname} {self[dname]}"
 		for tname in tensors:
 			s += f"\n  {tname} {self[tname]}"
+		return s
+
+	def _repr_html_(self):
+		if len(self._path) == 0:
+			s = f"<h4>(root) (shoji.Workspace)</h4>"
+		else:
+			s = f"<h4>{self._name} (shoji.Workspace)</h4>"
+		
+		subspaces = self._workspaces()
+		if len(subspaces) > 0:
+			s += f"<h5>Sub-workspaces</h5>"
+			s += "<table><tr><th></th><th>Contents</th></tr>"
+			for wsname in subspaces:
+				ws = self[wsname]
+				s += "<tr>"
+				n_subspaces = len(ws._workspaces())
+				n_dimensions = len(ws._dimensions())
+				n_tensors = len(ws._tensors())
+				s += f"<td align='left'><strong>{ws._name}</strong></td><td>{n_subspaces} workspaces, {n_dimensions} dimensions, {n_tensors} tensors</td>"
+				s += "</tr>"
+			s += "</table>"
+	
+		dimensions = self._dimensions()
+		if len(dimensions) > 0:
+			s += f"<h5>Dimensions</h5>"
+			s += "<table><tr><th></th><th>shape</th><th>length</th></tr>"
+			for dname in dimensions:
+				dim = self[dname]
+				s += "<tr>"
+				s += f"<td align='left'><strong>{dim.name}</strong></td>"
+				s += f"<td>{dim.shape:,}</td>" if dim.shape is not None else "<td>None</td>"
+				s += f"<td>{dim.length:,}</td>"
+				s += "</tr>"
+			s += "</table>"
+
+		tensors = self._tensors()
+		if len(tensors) > 0:
+			s += f"<h5>Tensors</h5>"
+			s += "<table><tr><th></th><th>dtype</th><th>rank</th><th>dims</th><th>shape</th><th>(values)</th></tr>"
+			for tname in tensors:
+				t = self[tname]
+				s += "<tr>"
+				s += f"<td align='left'><strong>{t.name}</strong></td>"
+				s += f"<td align='left'>{t.dtype}</td>"
+				s += f"<td align='left'>{t.rank}</td>"
+				if t.rank > 0:
+					s += "<td>" + " ✕ ".join([str(s) for s in t.dims]) + "</td>"
+					s += "<td>" + " ✕ ".join(['{:,}'.format(s) for s in t.shape]) + "</td>"
+				else:
+					s += "<td>()</td>"
+					s += "<td>(scalar)</td>"
+				s += f"<td>{t._quick_look()}</td>"
+				s += "</tr>"
+			s += "</table>"
 		return s
