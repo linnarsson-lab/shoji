@@ -1,5 +1,18 @@
 """
-Tensors, representing multidimensional arrays of numbers or strings.
+All data in Shoji  is stored as N-dimensional tensors. A tensor is a
+generalisation of scalars, vectors and matrices to N dimensions. 
+
+Tensors are defined by their *rank*, *datatype*, *dimensions*, *shape* and *values*.
+
+## Rank
+
+The *rank* of a tensor is the number of dimensions of the tensor. A scalar 
+value has rank 0, a vector has rank 1, and a matrix has rank 2. Higher ranks
+are possible; for example, a vector of 2D images would have rank 3, and a
+timelapse recording in three color channels would have rank 6 (time, width, height,
+three colors).
+
+..image:: /assets/bitmap/tensor_rank@2x.png
 """
 from typing import Tuple, Union, List, Optional, Callable
 import numpy as np

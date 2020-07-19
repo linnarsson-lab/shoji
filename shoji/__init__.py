@@ -14,7 +14,7 @@ organized as vectors, matrices and higher-dimensional tensors.
 - Concurrent access, with consistent serial reads and writes
 - Elegant, convenient Python API, aligned with numpy
 
-Oh, and it's fast.
+Oh, and it's still fast.
 
 ## Data model
 

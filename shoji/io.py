@@ -414,10 +414,10 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
 				target_size = dim.shape
 			if tensors[name].jagged:
 				for row in values:
-					if row.shape[i] != target_size: 
-						raise ValueError(f"Tensor '{name}' dimension '{idim}' must be exactly {target_size} elements long")
+					if row.shape[i - 1] != target_size: 
+						raise ValueError(f"Tensor '{name}' dimension {i} ('{idim}') must be exactly {target_size} elements long, but shape was {row.shape}")
 			elif target_size != values.shape[i]:  # type: ignore
-				raise ValueError(f"Tensor '{name}' dimension {i} ('{idim}') must be exactly {target_size} elements long")
+				raise ValueError(f"Tensor '{name}' dimension {i} ('{idim}') must be exactly {target_size} elements long, but shape was {row.shape}")
 				
 	# Write the values
 	for name, values in vals.items():

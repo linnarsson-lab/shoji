@@ -78,24 +78,44 @@ class Filter:
         def __init__(self) -&gt; None:
                 self.dim: Union[str, int, None]
 
-        def _combine(self, operator: str, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                assert isinstance(other, Filter), &#34;Invalid logical expression&#34;
-                return shoji.CompoundFilter(operator, self, other)
+        def _combine(self, operator: str, this: Union[&#34;Filter&#34;, &#34;shoji.View&#34;], other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                def fixup(arg):
+                        if isinstance(arg, Filter):
+                                return arg
+                        elif isinstance(this, shoji.View):
+                                if len(this.filters) == 1:
+                                        for f in this.filters.values():
+                                                return f
+                                else:
+                                        raise ValueError(&#34;Cannot use logical expression on compound view&#34;)
 
-        def __and__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;&amp;&#34;, other)
+                a = fixup(this)
+                b = fixup(other)
+                return shoji.CompoundFilter(operator, a, b)
 
-        def __or__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;|&#34;, other)
+        def __and__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;&amp;&#34;, self, other)
 
-        def __sub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;-&#34;, other)
+        def __rand__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;&amp;&#34;, other, self)
 
-        def __rsub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return other._combine(&#34;-&#34;, self)
+        def __or__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;|&#34;, self, other)
 
-        def __xor__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;^&#34;, other)
+        def __ror__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;|&#34;, other, self)
+
+        def __sub__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;-&#34;, self, other)
+
+        def __rsub__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return other._combine(&#34;-&#34;, other, self)
+
+        def __xor__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;^&#34;, self, other)
+
+        def __rxor__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;^&#34;, other, self)
 
         def __invert__(self) -&gt; &#34;Filter&#34;:
                 return shoji.CompoundFilter(&#34;~&#34;, self, None)
@@ -177,11 +197,11 @@ class TensorFilter(Filter):
                         self.dim = right_operand.dims[0]
                 else:
                         self.dim = None
-                if left_operand.length != right_operand.length:
+                if left_operand.shape[0] != right_operand.shape[0]:
                         raise SyntaxError(f&#34;Tensor first dimensions mismatch&#34;)
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.left_operand.length)  # TODO: maybe read this from db instead, to avoid stale state
+                return np.arange(self.left_operand.shape[0])  # TODO: maybe read this from db instead, to avoid stale state
 
         def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 if self.operator == &#34;&gt;&#34;:
@@ -210,10 +230,10 @@ class ConstFilter(Filter):
                         raise SyntaxError(f&#34;Only str, int, float and bool can be used as constants in filters&#34;)
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.left_operand.length)
+                return np.arange(self.left_operand.shape[0])
 
         def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.assigned_name, self.operator, self.right_operand)
+                return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.name, self.operator, self.right_operand)
 
         def __repr__(self) -&gt; str:
                 return f&#34;({self.left_operand} {self.operator} {self.right_operand})&#34;
@@ -221,7 +241,7 @@ class ConstFilter(Filter):
 
 class DimensionSliceFilter(Filter):
         def __init__(self, dim: shoji.Dimension, slice_: slice) -&gt; None:
-                self.dim = dim.assigned_name
+                self.dim = dim.name
                 self.dimension = dim
                 self.slice_ = slice_
 
@@ -239,7 +259,7 @@ class DimensionSliceFilter(Filter):
 
 class DimensionIndicesFilter(Filter):
         def __init__(self, dim: shoji.Dimension, indices: np.ndarray) -&gt; None:
-                self.dim = dim.assigned_name
+                self.dim = dim.name
                 self.dimension = dim
                 self.indices = indices
 
@@ -248,6 +268,8 @@ class DimensionIndicesFilter(Filter):
 
         def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.dimension.length
+                if not np.all(self.indices &lt; self.dimension.length):
+                        raise IndexError(&#34;Index out of range&#34;)
                 return self.indices[self.indices &lt; self.dimension.length]
 
         def __repr__(self) -&gt; str:
@@ -256,7 +278,7 @@ class DimensionIndicesFilter(Filter):
 
 class DimensionBoolFilter(Filter):
         def __init__(self, dim: shoji.Dimension, selected: np.ndarray) -&gt; None:
-                self.dim = dim.assigned_name
+                self.dim = dim.name
                 self.dimension = dim
                 self.selected = selected
 
@@ -269,7 +291,62 @@ class DimensionBoolFilter(Filter):
                 return np.where(self.selected)[0]
 
         def __repr__(self) -&gt; str:
-                return f&#34;({self.dim}[{self.selected}])&#34;</code></pre>
+                return f&#34;({self.dim}[{self.selected}])&#34;
+
+
+class TensorSliceFilter(Filter):
+        def __init__(self, tensor: shoji.Tensor, slice_: slice) -&gt; None:
+                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+                self.tensor = tensor
+                self.slice_ = slice_
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.tensor.shape[0])
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                s = self.slice_.indices(self.tensor.shape[0])
+                return np.arange(s[0], s[1], s[2])
+
+        def __repr__(self) -&gt; str:
+                s = self.slice_.indices(self.tensor.shape[0])
+                return f&#34;({self.tensor.name}[{s[0]}:{s[1]}:{s[2]}])&#34;
+
+
+class TensorIndicesFilter(Filter):
+        def __init__(self, tensor: shoji.Tensor, indices: np.ndarray) -&gt; None:
+                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+                self.tensor = tensor
+                self.indices = indices
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.tensor.shape[0])
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[0]
+                if not np.all(self.indices &lt; len(self.tensor)):
+                        raise IndexError(&#34;Index out of range&#34;)
+                return self.indices[self.indices &lt; self.tensor.shape[0]]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.tensor.name}[{self.indices}])&#34;
+
+
+class TensorBoolFilter(Filter):
+        def __init__(self, tensor: shoji.Tensor, selected: np.ndarray) -&gt; None:
+                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+                self.tensor = tensor
+                self.selected = selected
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.tensor.shape[0])
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                if self.selected.shape[0] != self.tensor.shape[0]:
+                        raise IndexError(f&#34;Boolean array used for fancy indexing along first dimension of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}&#34;)
+                return np.where(self.selected)[0]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.tensor.name}[{self.selected}])&#34;</code></pre>
 </details>
 </section>
 <section>
@@ -424,10 +501,10 @@ class DimensionBoolFilter(Filter):
                         raise SyntaxError(f&#34;Only str, int, float and bool can be used as constants in filters&#34;)
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.left_operand.length)
+                return np.arange(self.left_operand.shape[0])
 
         def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.assigned_name, self.operator, self.right_operand)
+                return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.name, self.operator, self.right_operand)
 
         def __repr__(self) -&gt; str:
                 return f&#34;({self.left_operand} {self.operator} {self.right_operand})&#34;</code></pre>
@@ -448,7 +525,7 @@ class DimensionBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        return np.arange(self.left_operand.length)</code></pre>
+        return np.arange(self.left_operand.shape[0])</code></pre>
 </details>
 </dd>
 <dt id="shoji.filter.ConstFilter.get_rows"><code class="name flex">
@@ -461,7 +538,7 @@ class DimensionBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.assigned_name, self.operator, self.right_operand)</code></pre>
+        return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.name, self.operator, self.right_operand)</code></pre>
 </details>
 </dd>
 </dl>
@@ -478,7 +555,7 @@ class DimensionBoolFilter(Filter):
 </summary>
 <pre><code class="python">class DimensionBoolFilter(Filter):
         def __init__(self, dim: shoji.Dimension, selected: np.ndarray) -&gt; None:
-                self.dim = dim.assigned_name
+                self.dim = dim.name
                 self.dimension = dim
                 self.selected = selected
 
@@ -541,7 +618,7 @@ class DimensionBoolFilter(Filter):
 </summary>
 <pre><code class="python">class DimensionIndicesFilter(Filter):
         def __init__(self, dim: shoji.Dimension, indices: np.ndarray) -&gt; None:
-                self.dim = dim.assigned_name
+                self.dim = dim.name
                 self.dimension = dim
                 self.indices = indices
 
@@ -550,6 +627,8 @@ class DimensionBoolFilter(Filter):
 
         def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.dimension.length
+                if not np.all(self.indices &lt; self.dimension.length):
+                        raise IndexError(&#34;Index out of range&#34;)
                 return self.indices[self.indices &lt; self.dimension.length]
 
         def __repr__(self) -&gt; str:
@@ -585,6 +664,8 @@ class DimensionBoolFilter(Filter):
 </summary>
 <pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
         self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.dimension.length
+        if not np.all(self.indices &lt; self.dimension.length):
+                raise IndexError(&#34;Index out of range&#34;)
         return self.indices[self.indices &lt; self.dimension.length]</code></pre>
 </details>
 </dd>
@@ -602,7 +683,7 @@ class DimensionBoolFilter(Filter):
 </summary>
 <pre><code class="python">class DimensionSliceFilter(Filter):
         def __init__(self, dim: shoji.Dimension, slice_: slice) -&gt; None:
-                self.dim = dim.assigned_name
+                self.dim = dim.name
                 self.dimension = dim
                 self.slice_ = slice_
 
@@ -665,24 +746,44 @@ class DimensionBoolFilter(Filter):
         def __init__(self) -&gt; None:
                 self.dim: Union[str, int, None]
 
-        def _combine(self, operator: str, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                assert isinstance(other, Filter), &#34;Invalid logical expression&#34;
-                return shoji.CompoundFilter(operator, self, other)
+        def _combine(self, operator: str, this: Union[&#34;Filter&#34;, &#34;shoji.View&#34;], other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                def fixup(arg):
+                        if isinstance(arg, Filter):
+                                return arg
+                        elif isinstance(this, shoji.View):
+                                if len(this.filters) == 1:
+                                        for f in this.filters.values():
+                                                return f
+                                else:
+                                        raise ValueError(&#34;Cannot use logical expression on compound view&#34;)
 
-        def __and__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;&amp;&#34;, other)
+                a = fixup(this)
+                b = fixup(other)
+                return shoji.CompoundFilter(operator, a, b)
 
-        def __or__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;|&#34;, other)
+        def __and__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;&amp;&#34;, self, other)
 
-        def __sub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;-&#34;, other)
+        def __rand__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;&amp;&#34;, other, self)
 
-        def __rsub__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return other._combine(&#34;-&#34;, self)
+        def __or__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;|&#34;, self, other)
 
-        def __xor__(self, other: &#34;Filter&#34;) -&gt; &#34;Filter&#34;:
-                return self._combine(&#34;^&#34;, other)
+        def __ror__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;|&#34;, other, self)
+
+        def __sub__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;-&#34;, self, other)
+
+        def __rsub__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return other._combine(&#34;-&#34;, other, self)
+
+        def __xor__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;^&#34;, self, other)
+
+        def __rxor__(self, other: Union[&#34;Filter&#34;, &#34;shoji.View&#34;]) -&gt; &#34;Filter&#34;:
+                return self._combine(&#34;^&#34;, other, self)
 
         def __invert__(self) -&gt; &#34;Filter&#34;:
                 return shoji.CompoundFilter(&#34;~&#34;, self, None)
@@ -700,7 +801,10 @@ class DimensionBoolFilter(Filter):
 <li><a title="shoji.filter.DimensionBoolFilter" href="#shoji.filter.DimensionBoolFilter">DimensionBoolFilter</a></li>
 <li><a title="shoji.filter.DimensionIndicesFilter" href="#shoji.filter.DimensionIndicesFilter">DimensionIndicesFilter</a></li>
 <li><a title="shoji.filter.DimensionSliceFilter" href="#shoji.filter.DimensionSliceFilter">DimensionSliceFilter</a></li>
+<li><a title="shoji.filter.TensorBoolFilter" href="#shoji.filter.TensorBoolFilter">TensorBoolFilter</a></li>
 <li><a title="shoji.filter.TensorFilter" href="#shoji.filter.TensorFilter">TensorFilter</a></li>
+<li><a title="shoji.filter.TensorIndicesFilter" href="#shoji.filter.TensorIndicesFilter">TensorIndicesFilter</a></li>
+<li><a title="shoji.filter.TensorSliceFilter" href="#shoji.filter.TensorSliceFilter">TensorSliceFilter</a></li>
 </ul>
 <h3>Methods</h3>
 <dl>
@@ -728,6 +832,69 @@ class DimensionBoolFilter(Filter):
 </summary>
 <pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
         pass</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.filter.TensorBoolFilter"><code class="flex name class">
+<span>class <span class="ident">TensorBoolFilter</span></span>
+<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, selected: numpy.ndarray)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class TensorBoolFilter(Filter):
+        def __init__(self, tensor: shoji.Tensor, selected: np.ndarray) -&gt; None:
+                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+                self.tensor = tensor
+                self.selected = selected
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.tensor.shape[0])
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                if self.selected.shape[0] != self.tensor.shape[0]:
+                        raise IndexError(f&#34;Boolean array used for fancy indexing along first dimension of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}&#34;)
+                return np.where(self.selected)[0]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.tensor.name}[{self.selected}])&#34;</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="shoji.filter.Filter" href="#shoji.filter.Filter">Filter</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.filter.TensorBoolFilter.get_all_rows"><code class="name flex">
+<span>def <span class="ident">get_all_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        return np.arange(self.tensor.shape[0])</code></pre>
+</details>
+</dd>
+<dt id="shoji.filter.TensorBoolFilter.get_rows"><code class="name flex">
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        if self.selected.shape[0] != self.tensor.shape[0]:
+                raise IndexError(f&#34;Boolean array used for fancy indexing along first dimension of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}&#34;)
+        return np.where(self.selected)[0]</code></pre>
 </details>
 </dd>
 </dl>
@@ -762,11 +929,11 @@ class DimensionBoolFilter(Filter):
                         self.dim = right_operand.dims[0]
                 else:
                         self.dim = None
-                if left_operand.length != right_operand.length:
+                if left_operand.shape[0] != right_operand.shape[0]:
                         raise SyntaxError(f&#34;Tensor first dimensions mismatch&#34;)
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.left_operand.length)  # TODO: maybe read this from db instead, to avoid stale state
+                return np.arange(self.left_operand.shape[0])  # TODO: maybe read this from db instead, to avoid stale state
 
         def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
                 if self.operator == &#34;&gt;&#34;:
@@ -793,7 +960,7 @@ class DimensionBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        return np.arange(self.left_operand.length)  # TODO: maybe read this from db instead, to avoid stale state</code></pre>
+        return np.arange(self.left_operand.shape[0])  # TODO: maybe read this from db instead, to avoid stale state</code></pre>
 </details>
 </dd>
 <dt id="shoji.filter.TensorFilter.get_rows"><code class="name flex">
@@ -809,6 +976,133 @@ class DimensionBoolFilter(Filter):
         if self.operator == &#34;&gt;&#34;:
                 # Do the range lookups on the tensor indexes
                 raise NotImplementedError(&#34;Tensor-tensor comparisons not yet supported&#34;)</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.filter.TensorIndicesFilter"><code class="flex name class">
+<span>class <span class="ident">TensorIndicesFilter</span></span>
+<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, indices: numpy.ndarray)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class TensorIndicesFilter(Filter):
+        def __init__(self, tensor: shoji.Tensor, indices: np.ndarray) -&gt; None:
+                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+                self.tensor = tensor
+                self.indices = indices
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.tensor.shape[0])
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[0]
+                if not np.all(self.indices &lt; len(self.tensor)):
+                        raise IndexError(&#34;Index out of range&#34;)
+                return self.indices[self.indices &lt; self.tensor.shape[0]]
+
+        def __repr__(self) -&gt; str:
+                return f&#34;({self.tensor.name}[{self.indices}])&#34;</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="shoji.filter.Filter" href="#shoji.filter.Filter">Filter</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.filter.TensorIndicesFilter.get_all_rows"><code class="name flex">
+<span>def <span class="ident">get_all_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        return np.arange(self.tensor.shape[0])</code></pre>
+</details>
+</dd>
+<dt id="shoji.filter.TensorIndicesFilter.get_rows"><code class="name flex">
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[0]
+        if not np.all(self.indices &lt; len(self.tensor)):
+                raise IndexError(&#34;Index out of range&#34;)
+        return self.indices[self.indices &lt; self.tensor.shape[0]]</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.filter.TensorSliceFilter"><code class="flex name class">
+<span>class <span class="ident">TensorSliceFilter</span></span>
+<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, slice_: slice)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class TensorSliceFilter(Filter):
+        def __init__(self, tensor: shoji.Tensor, slice_: slice) -&gt; None:
+                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+                self.tensor = tensor
+                self.slice_ = slice_
+
+        def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                return np.arange(self.tensor.shape[0])
+
+        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+                s = self.slice_.indices(self.tensor.shape[0])
+                return np.arange(s[0], s[1], s[2])
+
+        def __repr__(self) -&gt; str:
+                s = self.slice_.indices(self.tensor.shape[0])
+                return f&#34;({self.tensor.name}[{s[0]}:{s[1]}:{s[2]}])&#34;</code></pre>
+</details>
+<h3>Ancestors</h3>
+<ul class="hlist">
+<li><a title="shoji.filter.Filter" href="#shoji.filter.Filter">Filter</a></li>
+</ul>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.filter.TensorSliceFilter.get_all_rows"><code class="name flex">
+<span>def <span class="ident">get_all_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        return np.arange(self.tensor.shape[0])</code></pre>
+</details>
+</dd>
+<dt id="shoji.filter.TensorSliceFilter.get_rows"><code class="name flex">
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) -> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
+        s = self.slice_.indices(self.tensor.shape[0])
+        return np.arange(s[0], s[1], s[2])</code></pre>
 </details>
 </dd>
 </dl>
@@ -875,10 +1169,31 @@ class DimensionBoolFilter(Filter):
 </ul>
 </li>
 <li>
+<h4><code><a title="shoji.filter.TensorBoolFilter" href="#shoji.filter.TensorBoolFilter">TensorBoolFilter</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.filter.TensorBoolFilter.get_all_rows" href="#shoji.filter.TensorBoolFilter.get_all_rows">get_all_rows</a></code></li>
+<li><code><a title="shoji.filter.TensorBoolFilter.get_rows" href="#shoji.filter.TensorBoolFilter.get_rows">get_rows</a></code></li>
+</ul>
+</li>
+<li>
 <h4><code><a title="shoji.filter.TensorFilter" href="#shoji.filter.TensorFilter">TensorFilter</a></code></h4>
 <ul class="">
 <li><code><a title="shoji.filter.TensorFilter.get_all_rows" href="#shoji.filter.TensorFilter.get_all_rows">get_all_rows</a></code></li>
 <li><code><a title="shoji.filter.TensorFilter.get_rows" href="#shoji.filter.TensorFilter.get_rows">get_rows</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.filter.TensorIndicesFilter" href="#shoji.filter.TensorIndicesFilter">TensorIndicesFilter</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.filter.TensorIndicesFilter.get_all_rows" href="#shoji.filter.TensorIndicesFilter.get_all_rows">get_all_rows</a></code></li>
+<li><code><a title="shoji.filter.TensorIndicesFilter.get_rows" href="#shoji.filter.TensorIndicesFilter.get_rows">get_rows</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.filter.TensorSliceFilter" href="#shoji.filter.TensorSliceFilter">TensorSliceFilter</a></code></h4>
+<ul class="">
+<li><code><a title="shoji.filter.TensorSliceFilter.get_all_rows" href="#shoji.filter.TensorSliceFilter.get_all_rows">get_all_rows</a></code></li>
+<li><code><a title="shoji.filter.TensorSliceFilter.get_rows" href="#shoji.filter.TensorSliceFilter.get_rows">get_rows</a></code></li>
 </ul>
 </li>
 </ul>

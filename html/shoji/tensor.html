@@ -36,7 +36,7 @@ import shoji
 class Tensor:
         valid_types = (&#34;bool&#34;, &#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;, &#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;, &#34;string&#34;)
 
-        def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, length: int = None) -&gt; None:
+        def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, shape: Tuple[int, ...] = None) -&gt; None:
                 &#34;&#34;&#34;
                 Args:
                         dtype:  string giving the datatype of the tensor elements
@@ -53,24 +53,23 @@ class Tensor:
                         The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
                 &#34;&#34;&#34;
                 self.dtype = dtype
-                self.length = length  # Length is the actual length as stored (or None if unknown)
                 # Check that the type is valid
                 if dtype not in Tensor.valid_types:
                         raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
 
                 self.dims = dims
         
-                self.assigned_name = &#34;&#34;  # Will be set if the Tensor is read from the db
+                self.name = &#34;&#34;  # Will be set if the Tensor is read from the db
                 self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
                 self.inits = inits
                 if self.inits is None:
                         self.jagged = False
-                        self.shape = None
+                        self.shape = shape if shape is not None else (0,) * len(dims)
                 else:
                         # If scalar, convert to an ndarray scalar which will have shape ()
                         if np.isscalar(self.inits):
-                                self.inits = np.array(self.inits)
+                                self.inits = np.array(self.inits, dtype=self.numpy_dtype())
                         # If not jagged, then it&#39;s a regular ndarray
                         if isinstance(self.inits, np.ndarray):
                                 self.shape = self.inits.shape
@@ -79,16 +78,16 @@ class Tensor:
                         else: # It&#39;s jagged: a list of ndarrays, possibly of different shapes
                                 assert isinstance(self.inits, list)
                                 self.jagged = True
-                                shape = list(self.inits[0].shape)
+                                shp: List[int] = list(self.inits[0].shape)
                                 for i, array in enumerate(self.inits):
                                         assert isinstance(array, np.ndarray), &#34;All rows of jagged array must be numpy ndarrays&#34;
                                         self._check_type(array)
-                                        if len(array.shape) != len(shape):
-                                                raise ValueError(f&#34;Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shape} at row 0&#34;)
-                                        for ix in range(len(shape)):
-                                                if shape[ix] != array.shape[ix]:
-                                                        shape[ix] = None
-                                self.shape = tuple([len(self.inits)] + shape)
+                                        if len(array.shape) != len(shp):
+                                                raise ValueError(f&#34;Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shp} at row 0&#34;)
+                                        for ix in range(len(shp)):
+                                                if shp[ix] != array.shape[ix]:
+                                                        shp[ix] = 0
+                                self.shape = tuple([len(self.inits)] + shp)
 
                         if len(self.dims) != len(self.shape):
                                 raise ValueError(f&#34;Rank mismatch: shape {self.dims} declared is not the same rank as shape {self.shape} of values&#34;)
@@ -101,6 +100,32 @@ class Tensor:
                                 if self.shape[ix] != dim:  # type: ignore
                                         raise IndexError(f&#34;Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
                 self.rank = len(self.dims)
+
+        def __len__(self) -&gt; int:
+                if self.rank &gt; 0:
+                        return self.shape[0]
+                return 0
+
+        def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int]) -&gt; np.ndarray:
+                assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
+                # Maybe it&#39;s a Filter, or a tuple of Filters?
+                if isinstance(expr, shoji.Filter):
+                        return shoji.View(self.wsm, (expr,))[self.name]
+                elif isinstance(expr, tuple) and isinstance(expr[0], shoji.Filter):
+                        return shoji.View(self.wsm, expr)[self.name]
+                # Or a slice?
+                if isinstance(expr, slice):
+                        if expr.start is None and expr.stop is None:
+                                return shoji.View(self.wsm, ())[self.name]
+                        return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
+                if isinstance(expr, (list, tuple, int)):
+                        expr = np.array(expr)
+                if isinstance(expr, np.ndarray):
+                        if np.issubdtype(expr.dtype, np.bool_):
+                                return shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name]
+                        elif np.issubdtype(expr.dtype, np.int_):
+                                return shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+                raise KeyError(expr)
 
         def numpy_dtype(self) -&gt; str:
                 if self.dtype == &#34;string&#34;:
@@ -150,8 +175,38 @@ class Tensor:
                         if (self.dtype == &#34;string&#34; and inits.dtype.name != &#34;object&#34;) or (self.dtype == &#34;string&#34; and inits.dtype.name == &#34;object&#34; and not isinstance(inits.flat[0], str)):
                                 raise TypeError(&#34;string tensors must be initialized with ndarray dtype &#39;object&#39;, where objects are strings&#34;)
 
+        def _quick_look(self) -&gt; str:
+                if self.rank == 0:
+                        return self[:]
+                elif self.rank == 1:
+                        s = &#34;[&#34; + &#34;, &#34;.join([str(x) for x in self[:5]])
+                        if len(self) &gt; 5:
+                                s += &#34;, ...]&#34;
+                        else:
+                                s += &#34;]&#34;
+                        return s
+                elif self.rank == 2:
+                        result = &#34;[&#34;
+                        elms = []
+                        for x in self[:5]:
+                                s = &#34;[&#34;
+                                s += &#34;, &#34;.join([str(x) for x in x[:5]])
+                                if len(x) &gt; 5:
+                                        s += &#34;, ...]&#34;
+                                else:
+                                        s += &#34;]&#34;
+                                elms.append(s)
+                        result += &#34;, &#34;.join(elms)
+                        if len(self) &gt; 5:
+                                result += &#34;, ...]&#34;
+                        else:
+                                result += &#34;]&#34;
+                        return result
+                else:
+                        return f&#34;(rank={self.rank})&#34;
+
         def __repr__(self) -&gt; str:
-                return f&#34;&lt;Tensor &#39;{self.dtype}&#39; {self.dims}, {self.length} row{&#39;s&#39; if self.length != 1 else &#39;&#39;}&gt;&#34;</code></pre>
+                return f&#34;&lt;Tensor dtype=&#39;{self.dtype}&#39; dims={self.dims}, shape={self.shape}&gt;&#34;</code></pre>
 </details>
 </section>
 <section>
@@ -165,7 +220,7 @@ class Tensor:
 <dl>
 <dt id="shoji.tensor.Tensor"><code class="flex name class">
 <span>class <span class="ident">Tensor</span></span>
-<span>(</span><span>dtype: str, dims: Tuple[Union[NoneType, int, str], ...], inits: Union[List[numpy.ndarray], numpy.ndarray] = None, length: int = None)</span>
+<span>(</span><span>dtype: str, dims: Tuple[Union[NoneType, int, str], ...], inits: Union[List[numpy.ndarray], numpy.ndarray] = None, shape: Tuple[int, ...] = None)</span>
 </code></dt>
 <dd>
 <div class="desc"><h2 id="args">Args</h2>
@@ -191,7 +246,7 @@ class Tensor:
 <pre><code class="python">class Tensor:
         valid_types = (&#34;bool&#34;, &#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;, &#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;, &#34;string&#34;)
 
-        def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, length: int = None) -&gt; None:
+        def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, shape: Tuple[int, ...] = None) -&gt; None:
                 &#34;&#34;&#34;
                 Args:
                         dtype:  string giving the datatype of the tensor elements
@@ -208,24 +263,23 @@ class Tensor:
                         The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
                 &#34;&#34;&#34;
                 self.dtype = dtype
-                self.length = length  # Length is the actual length as stored (or None if unknown)
                 # Check that the type is valid
                 if dtype not in Tensor.valid_types:
                         raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
 
                 self.dims = dims
         
-                self.assigned_name = &#34;&#34;  # Will be set if the Tensor is read from the db
+                self.name = &#34;&#34;  # Will be set if the Tensor is read from the db
                 self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
                 self.inits = inits
                 if self.inits is None:
                         self.jagged = False
-                        self.shape = None
+                        self.shape = shape if shape is not None else (0,) * len(dims)
                 else:
                         # If scalar, convert to an ndarray scalar which will have shape ()
                         if np.isscalar(self.inits):
-                                self.inits = np.array(self.inits)
+                                self.inits = np.array(self.inits, dtype=self.numpy_dtype())
                         # If not jagged, then it&#39;s a regular ndarray
                         if isinstance(self.inits, np.ndarray):
                                 self.shape = self.inits.shape
@@ -234,16 +288,16 @@ class Tensor:
                         else: # It&#39;s jagged: a list of ndarrays, possibly of different shapes
                                 assert isinstance(self.inits, list)
                                 self.jagged = True
-                                shape = list(self.inits[0].shape)
+                                shp: List[int] = list(self.inits[0].shape)
                                 for i, array in enumerate(self.inits):
                                         assert isinstance(array, np.ndarray), &#34;All rows of jagged array must be numpy ndarrays&#34;
                                         self._check_type(array)
-                                        if len(array.shape) != len(shape):
-                                                raise ValueError(f&#34;Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shape} at row 0&#34;)
-                                        for ix in range(len(shape)):
-                                                if shape[ix] != array.shape[ix]:
-                                                        shape[ix] = None
-                                self.shape = tuple([len(self.inits)] + shape)
+                                        if len(array.shape) != len(shp):
+                                                raise ValueError(f&#34;Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shp} at row 0&#34;)
+                                        for ix in range(len(shp)):
+                                                if shp[ix] != array.shape[ix]:
+                                                        shp[ix] = 0
+                                self.shape = tuple([len(self.inits)] + shp)
 
                         if len(self.dims) != len(self.shape):
                                 raise ValueError(f&#34;Rank mismatch: shape {self.dims} declared is not the same rank as shape {self.shape} of values&#34;)
@@ -256,6 +310,32 @@ class Tensor:
                                 if self.shape[ix] != dim:  # type: ignore
                                         raise IndexError(f&#34;Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values&#34;)
                 self.rank = len(self.dims)
+
+        def __len__(self) -&gt; int:
+                if self.rank &gt; 0:
+                        return self.shape[0]
+                return 0
+
+        def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int]) -&gt; np.ndarray:
+                assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
+                # Maybe it&#39;s a Filter, or a tuple of Filters?
+                if isinstance(expr, shoji.Filter):
+                        return shoji.View(self.wsm, (expr,))[self.name]
+                elif isinstance(expr, tuple) and isinstance(expr[0], shoji.Filter):
+                        return shoji.View(self.wsm, expr)[self.name]
+                # Or a slice?
+                if isinstance(expr, slice):
+                        if expr.start is None and expr.stop is None:
+                                return shoji.View(self.wsm, ())[self.name]
+                        return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
+                if isinstance(expr, (list, tuple, int)):
+                        expr = np.array(expr)
+                if isinstance(expr, np.ndarray):
+                        if np.issubdtype(expr.dtype, np.bool_):
+                                return shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name]
+                        elif np.issubdtype(expr.dtype, np.int_):
+                                return shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+                raise KeyError(expr)
 
         def numpy_dtype(self) -&gt; str:
                 if self.dtype == &#34;string&#34;:
@@ -305,8 +385,38 @@ class Tensor:
                         if (self.dtype == &#34;string&#34; and inits.dtype.name != &#34;object&#34;) or (self.dtype == &#34;string&#34; and inits.dtype.name == &#34;object&#34; and not isinstance(inits.flat[0], str)):
                                 raise TypeError(&#34;string tensors must be initialized with ndarray dtype &#39;object&#39;, where objects are strings&#34;)
 
+        def _quick_look(self) -&gt; str:
+                if self.rank == 0:
+                        return self[:]
+                elif self.rank == 1:
+                        s = &#34;[&#34; + &#34;, &#34;.join([str(x) for x in self[:5]])
+                        if len(self) &gt; 5:
+                                s += &#34;, ...]&#34;
+                        else:
+                                s += &#34;]&#34;
+                        return s
+                elif self.rank == 2:
+                        result = &#34;[&#34;
+                        elms = []
+                        for x in self[:5]:
+                                s = &#34;[&#34;
+                                s += &#34;, &#34;.join([str(x) for x in x[:5]])
+                                if len(x) &gt; 5:
+                                        s += &#34;, ...]&#34;
+                                else:
+                                        s += &#34;]&#34;
+                                elms.append(s)
+                        result += &#34;, &#34;.join(elms)
+                        if len(self) &gt; 5:
+                                result += &#34;, ...]&#34;
+                        else:
+                                result += &#34;]&#34;
+                        return result
+                else:
+                        return f&#34;(rank={self.rank})&#34;
+
         def __repr__(self) -&gt; str:
-                return f&#34;&lt;Tensor &#39;{self.dtype}&#39; {self.dims}, {self.length} row{&#39;s&#39; if self.length != 1 else &#39;&#39;}&gt;&#34;</code></pre>
+                return f&#34;&lt;Tensor dtype=&#39;{self.dtype}&#39; dims={self.dims}, shape={self.shape}&gt;&#34;</code></pre>
 </details>
 <h3>Class variables</h3>
 <dl>
