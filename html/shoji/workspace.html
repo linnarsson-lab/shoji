@@ -28,7 +28,8 @@ dimensions that reside in the same workspace, and the implicit constraints impos
 of common dimensions exist only within a single workspace. </p>
 <p>A Workspace is a bit like a collection of tables in a relational database, or a collection of
 Pandas DataFrames. Each dimension in a workspace corresponds to a table, and each tensor with
-that dimension as its first dimension corresponds to a column in the table.</p>
+that dimension as its first dimension corresponds to a column in the table. However, workspaces
+can also contain tensors that link two or more dimensions.</p>
 <p>For example, a simple table of samples, with columns for sample ID, name, age and description
 could be modelled as follows:</p>
 <pre><code class="python">import shoji
@@ -87,7 +88,8 @@ of common dimensions exist only within a single workspace.
 
 A Workspace is a bit like a collection of tables in a relational database, or a collection of
 Pandas DataFrames. Each dimension in a workspace corresponds to a table, and each tensor with
-that dimension as its first dimension corresponds to a column in the table.
+that dimension as its first dimension corresponds to a column in the table. However, workspaces
+can also contain tensors that link two or more dimensions.
 
 For example, a simple table of samples, with columns for sample ID, name, age and description
 could be modelled as follows:
@@ -233,6 +235,9 @@ class WorkspaceManager:
                 # Try to read an attribute on the object
                 if isinstance(expr, str):
                         return self.__getattr__(expr)
+                # Perhaps it&#39;s a view already (e.g. a slice of a dimension)
+                if isinstance(expr, shoji.View):
+                        return expr
                 # Maybe it&#39;s a Filter, or a tuple of Filters?
                 if isinstance(expr, shoji.Filter):
                         return shoji.View(self, (expr,))
@@ -509,6 +514,9 @@ class WorkspaceManager:
                 # Try to read an attribute on the object
                 if isinstance(expr, str):
                         return self.__getattr__(expr)
+                # Perhaps it&#39;s a view already (e.g. a slice of a dimension)
+                if isinstance(expr, shoji.View):
+                        return expr
                 # Maybe it&#39;s a Filter, or a tuple of Filters?
                 if isinstance(expr, shoji.Filter):
                         return shoji.View(self, (expr,))

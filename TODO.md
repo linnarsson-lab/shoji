@@ -1,10 +1,18 @@
 
-Enums?
 Pinning (prevent deletion) workspaces, dimensions and tensors
 Maybe: use shoji as backing for xarray via dask
 View.groupby() and aggregate (or maybe Dimension.groupby()?)
+View.orderby(tensor, take=10)
 .aspandas(), .asxarray() etc.
-Move .from_loompy() to .toshoji() on loompy
+Move .from_loom() to .toshoji() on loompy
+GUI
+Enums?
+datetime and timeinterval datatypes (but which ones?)
+Cookbook: how to model different kinds of data (table, relational db, sparse matrix, graph)
+Maybe: direct sparse matrix support (at least for reading)
+Minimize number of roundtrips per operation to reduce latency
+
+
 
 Make sure jagged & scalar tensors work as intended
 Exploit parallelism with futures

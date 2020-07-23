@@ -23,16 +23,27 @@ constrained to have the same number of elements along that …" />
 <section id="section-intro">
 <p>Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
 constrained to have the same number of elements along that axis. </p>
+<p><img alt="" src="assets/bitmap/tensor_dims@2x.png"></p>
+<h2 id="overview">Overview</h2>
+<p>Dimensions must be defined in the <code><a title="shoji.workspace.Workspace" href="workspace.html#shoji.workspace.Workspace">Workspace</a></code> before they can be used:</p>
+<pre><code class="python">db = shoji.connect()
+db.scRNA = shoji.Workspace()
+db.scRNA.cells = shoji.Dimension(shape=None)
+db.scRNA.genes = shoji.Dimension(shape=5000)
+</code></pre>
+<p>Once the dimensions have been declared, tensors can use those dimensions:</p>
+<pre><code class="python">db.scRNA.Expression = shoji.Tensor(&quot;int16&quot;, (&quot;cells&quot;, &quot;genes&quot;))
+db.scRNA.CellType = shoji.Tensor(&quot;string&quot;, (&quot;cells&quot;,))
+db.scRNA.Length = shoji.Tensor(&quot;uint16&quot;, (&quot;genes&quot;,))
+db.scRNA.Chromosome = shoji.Tensor(&quot;string&quot;, (&quot;genes&quot;,))
+</code></pre>
 <h2 id="adding-data-along-a-dimension">Adding data along a dimension</h2>
 <p>In order to ensure that the dimension constraints are always fulfilled, data must be added
-in parallel to all tensors that share a dimension, using the <code>append()</code> method. For example,
-to add samples to a project with a <code>samples</code> dimension:</p>
-<pre><code class="python">ws = db.cancer_project
-ws.samples.append({
-        &quot;SampleID&quot;: np.array([1, 2, 3, 4]),
-        &quot;SampleName&quot;: np.array([&quot;Sample 1&quot;, &quot;Sample 2&quot;, &quot;Sample 3&quot;, &quot;Sample 4&quot;]),
-        &quot;Age&quot;: np.array([10, 23, 21, 24]),
-        &quot;Description&quot;: np.array([&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;])
+in parallel to all tensors that share a dimension, using the <code>append()</code> method on the
+dimension. For example, to add cells to a project with a <code>cells</code> dimension:</p>
+<pre><code class="python">db.scRNA.cells.append({
+        &quot;CellType&quot;: np.array([&quot;Neuron&quot;, &quot;Astrocyte&quot;, &quot;Neuron&quot;, &quot;Miroglia&quot;], dtype=object),
+        &quot;Expression&quot;: np.random.randint(0, 10, size=(4, 5000), dtype=&quot;uint16&quot;)
 })
 </code></pre>
 <p>Note that if you leave out one of the tensors (of the ones that have <code>"samples"</code> as their first
@@ -40,7 +51,7 @@ dimension), or supply data of inconsistent shape, the append method will raise a
 <p>Appending data using this method is guaranteed to never fail with a partial row written (but may not
 complete all the rows successfully), and will never leave the database in an inconsistent state
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
-wrap the append() in a <code><a title="shoji.transaction.Transaction" href="transaction.html#shoji.transaction.Transaction">Transaction</a></code>.</p>
+wrap the <code>append()</code> in a <code><a title="shoji.transaction.Transaction" href="transaction.html#shoji.transaction.Transaction">Transaction</a></code>.</p>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -49,19 +60,38 @@ wrap the append() in a <code><a title="shoji.transaction.Transaction" href="tran
 Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
 constrained to have the same number of elements along that axis. 
 
+..image:: assets/bitmap/tensor_dims@2x.png
+
+## Overview
+
+Dimensions must be defined in the `shoji.workspace.Workspace` before they can be used:
+
+```python
+db = shoji.connect()
+db.scRNA = shoji.Workspace()
+db.scRNA.cells = shoji.Dimension(shape=None)
+db.scRNA.genes = shoji.Dimension(shape=5000)
+```
+
+Once the dimensions have been declared, tensors can use those dimensions:
+
+```python
+db.scRNA.Expression = shoji.Tensor(&#34;int16&#34;, (&#34;cells&#34;, &#34;genes&#34;))
+db.scRNA.CellType = shoji.Tensor(&#34;string&#34;, (&#34;cells&#34;,))
+db.scRNA.Length = shoji.Tensor(&#34;uint16&#34;, (&#34;genes&#34;,))
+db.scRNA.Chromosome = shoji.Tensor(&#34;string&#34;, (&#34;genes&#34;,))
+```
+
 ## Adding data along a dimension
 
 In order to ensure that the dimension constraints are always fulfilled, data must be added
-in parallel to all tensors that share a dimension, using the `append()` method. For example, 
-to add samples to a project with a `samples` dimension:
+in parallel to all tensors that share a dimension, using the `append()` method on the 
+dimension. For example, to add cells to a project with a `cells` dimension:
 
 ```python
-ws = db.cancer_project
-ws.samples.append({
-        &#34;SampleID&#34;: np.array([1, 2, 3, 4]),
-        &#34;SampleName&#34;: np.array([&#34;Sample 1&#34;, &#34;Sample 2&#34;, &#34;Sample 3&#34;, &#34;Sample 4&#34;]),
-        &#34;Age&#34;: np.array([10, 23, 21, 24]),
-        &#34;Description&#34;: np.array([&#34;&#34;, &#34;&#34;, &#34;&#34;, &#34;&#34;])
+db.scRNA.cells.append({
+        &#34;CellType&#34;: np.array([&#34;Neuron&#34;, &#34;Astrocyte&#34;, &#34;Neuron&#34;, &#34;Miroglia&#34;], dtype=object),
+        &#34;Expression&#34;: np.random.randint(0, 10, size=(4, 5000), dtype=&#34;uint16&#34;)
 })
 ```
 
@@ -71,7 +101,7 @@ dimension), or supply data of inconsistent shape, the append method will raise a
 Appending data using this method is guaranteed to never fail with a partial row written (but may not
 complete all the rows successfully), and will never leave the database in an inconsistent state 
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
-wrap the append() in a `shoji.transaction.Transaction`.
+wrap the `append()` in a `shoji.transaction.Transaction`.
 &#34;&#34;&#34;
 from typing import Optional, Dict
 import numpy as np
@@ -119,9 +149,6 @@ class Dimension:
 
                 Args:
                         vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
-
-                Returns:
-                        n_rows: the number of rows actually appended
 
                 Remarks:
                         The method is transactional, i.e. it&#39;s guaranteed to either succeed or
@@ -212,9 +239,6 @@ class Dimension:
                 Args:
                         vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
 
-                Returns:
-                        n_rows: the number of rows actually appended
-
                 Remarks:
                         The method is transactional, i.e. it&#39;s guaranteed to either succeed or
                         fail without leaving the database in an inconsistent state. If it fails, 
@@ -254,11 +278,6 @@ class Dimension:
 <dt><strong><code>vals</code></strong></dt>
 <dd>Dict mapping tensor names (<code>str</code>) to tensor values (<code>np.ndarray</code>)</dd>
 </dl>
-<h2 id="returns">Returns</h2>
-<dl>
-<dt><code>n_rows</code></dt>
-<dd>the number of rows actually appended</dd>
-</dl>
 <h2 id="remarks">Remarks</h2>
 <p>The method is transactional, i.e. it's guaranteed to either succeed or
 fail without leaving the database in an inconsistent state. If it fails,
@@ -274,9 +293,6 @@ tensors will have the same length along the dimension.</p></div>
 
         Args:
                 vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
-
-        Returns:
-                n_rows: the number of rows actually appended
 
         Remarks:
                 The method is transactional, i.e. it&#39;s guaranteed to either succeed or
@@ -315,6 +331,7 @@ tensors will have the same length along the dimension.</p></div>
 <h1>Index</h1>
 <div class="toc">
 <ul>
+<li><a href="#overview">Overview</a></li>
 <li><a href="#adding-data-along-a-dimension">Adding data along a dimension</a></li>
 </ul>
 </div>

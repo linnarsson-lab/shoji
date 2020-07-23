@@ -1,5 +1,14 @@
 """
-Transactions, supporting atomic multi-statement operations.
+Transactions, supporting atomic multi-statement operations. Usage:
+
+```python
+with shoji.Transaction():
+    # code that executes atomically
+```
+
+Transactions are subject to [size and time limits](file:///Users/stelin/shoji/html/shoji/index.html#limitations).
+
+Note that shoji guarantees row-level database consistency without the use of explicit transactions.
 """
 import shoji
 

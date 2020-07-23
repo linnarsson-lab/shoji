@@ -1,5 +1,45 @@
 """
-Views of tensors, defined by filters.
+Views let you work with a selected subset of a workspace. Reading from the view automatically
+returns values from the selected subset of the database. Values written to the view
+are automatically written to the corresponding subset of the database.
+
+Views are *selections of elements* along one or more dimensions. 
+
+View are created by filter expressions (see `shoji.filters`) on workspaces or dimensions. Once you 
+have obtained a view, you can read from it just like you would from the workspace itself:
+
+```python
+view = ws.scRNA.cells[:1000]  # A view of the first 1000 rows along the cells dimension
+ages = view.Age				  # The first 1000 values of the Age tensor, as np.ndarray
+```
+
+You can also write to the underlying workspace by assigning values to a view:
+
+```python
+new_ages = np.array(...)	  # A numpy array of values
+view = ws.scRNA.cells[::2]    # A view of every other row along the cells dimension
+view.Age = new_ages           # The corresponding rows in the underlying tensor are updated
+```
+
+Assigning values in this way is an atomic operation (it will either succeed or fail
+completely), and is subject to the [size and time limits](file:///Users/stelin/shoji/html/shoji/index.html#limitations) of shoji transactions.
+
+You can create a view that selects rows along more than one dimension, by providing two 
+or more filter expressions separated by comma:
+
+```python
+ws = db.scRNA
+ws.cells = shoji.Dimension(shape=None)
+ws.genes = shoji.Dimension(shape=31768)
+ws.Age = shoji.Tensor("string", ("cells",))
+ws.Chromosome = shoji.Tensor("string", ("genes",))
+# Slice both dimensions:
+view = ws.scRNA[ws.Age > 10, ws.Chromosome == "chr1"]
+```
+
+
+
+
 """
 from typing import Tuple
 import shoji

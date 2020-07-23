@@ -7,52 +7,142 @@ organized as vectors, matrices and higher-dimensional tensors.
 - Multi-petabyte scalable, distributed, high-performance database
 - Data modelled as N-dimensional tensors with boolean, string or numeric elements
 - Supports both regular and jagged tensors
-- Automatic data compression
-- Relationships expressed through shared (and named) dimensions
-- Read and write data through filter expressions (similar to SQL SELECT)
+- Automatic chunking and compression
+- Relationships expressed through shared named dimensions
+- Read and write data through views created by powerful filter expressions
+- Automatic indexing for fast filtering
 - Data safety through transactions and [ACID](https://en.wikipedia.org/wiki/ACID) properties (atomicity, consistency, isolation, durability)
-- Concurrent access, with consistent serial reads and writes
+- Concurrent read/write access
 - Elegant, convenient Python API, aligned with numpy
 
-Oh, and it's still fast.
+Oh, and it's pretty fast.
 
-## Data model
+## Overview
+
+### Data model
 
 In Shoji, data is stored as tensors, and relationships are expressed using shared dimensions. 
 
-The fundamental unit of data storage in Shoji is the *row* (and its generalization to N dimensions). 
-Data is added to, or removed from, tensors by rows; columns cannot be added or removed. 
+The atomic unit of data storage in Shoji is the *row* (and its generalization to N dimensions). 
+Data is added to tensors by rows; columns cannot be added or removed. 
 
 Dimensions can be named, and named dimensions express relationships and constraints between tensors.
 Tensors that share a named dimension must have the same length along that dimension (and this relationship
 is enforced when adding or removing rows).
 
 You can think of rows as your data *objects*, dimensions as object *types*, and the tensors as object
-*attributes*. For example, a set of vectors defined on a samples dimension could be seen as the attributes
-of samples (e.g. SampleID, Age, Tissue, Date), and an individual sample would correspond to an individual
-row across all tensors.
+*attributes*. For example, a set of vectors (e.g. `SampleID`, `Age`, `Tissue`, `Date`) defined on a `samples` dimension could be seen as the attributes
+of samples, and an individual sample would correspond to an individual row across all tensors.
 
 Tensors can also be related to multiple named dimensions. For example, omics data (e.g. gene expression)
 is often represented as matrices, which can be represented in Shoji as rank-2 tensors with two named
-dimensions, e.g. cells and genes. Metadata about cells and genes would be stored as rank-1 tensors
-(vectors) along the cells and genes dimensions, respectively. 
+dimensions, e.g. `cells` and `genes`. Metadata about cells and genes would be stored as rank-1 tensors
+(vectors) along the `cells` and `genes` dimensions, respectively. 
 
 Similarly, multichannel timelapse image data can be represented as high-rank tensors with dimensions
-such as x, y, channel, and timepoint.
+such as `x`, `y`, `channel`, and `timepoint`.
 
-## Important classes
+The fundamental operations in shoji are: *creating a tensor*, *appending values*, *reading values*, 
+*updating values*.
 
-`shoji.workspace.Workspace`:    Workspaces let you organise collections of data that belong together.
+### ACID guarantees
 
-`shoji.tensor.Tensor`:  N-dimensional arrays of numbers, booleans and strings.
+Shoji treats the *row* as the atomic unit when writing data. This means that if your program crashes in the
+middle of an operation, you are guaranteed that there will be no half-created rows in the database.
 
-`shoji.dimension.Dimension`:    Named dimensions that constrain tensors.
+When more than one tensor shares their first dimension, the atomic unit for writing new data (i.e. for
+`shoji.dimension.Dimension.append`) is one row across all tensors that share the same first dimension.
+In other words, if your program crashes in the middle of an `append()` operation, shoji guarantees
+that some number of complete rows (or nothing at all) will have been written across all the relevant tensors, 
+ensuring that they stay in sync.
 
-`shoji.filter.Filter`:  Expressions used to read subsets of tensors.
+If you need stronger guarantees, you can wrap multiple database operations in a `shoji.transaction`.
 
-`shoji.view.View`:  A view of the database through a set of filter expressions.
+### Limitations
 
-`shoji.transaction.Transaction`:    Read and write data using atomic operations.
+Shoji is build on [FoundationDB](https://www.foundationdb.org), a powerful open-source key-value store
+developed by [Apple](https://www.apple.com). It is FoundationDB that gives Shoji a solid foundation 
+of performance, scalability and ACID guarantees. In order to gain these features, there are a few limitations
+though:
+
+* Transactions cannot exceed 5 seconds. If a transaction takes longer, it's terminated and rolled back.
+For Shoji, this limits the total feasible size of a row (or a set of rows for append operations), since
+Shoji reads and writes rows transactionally. 
+
+* Transactions exceeding 1 MB can cause performance issues, and transactions cannot exceed 10 MB. This
+also limits the total feasible size of a tensor row, since Shoji reads and writes rows transactionally
+to ensure consistency.
+
+* FoundationDB is optimized to run on SSDs. Running on mechanical disks is discouraged.
+
+For more details about these and some other limitations, see the [FoundationDB docs](https://apple.github.io/foundationdb/known-limitations.html)
+
+
+## Getting started
+
+### Installation
+
+Shoji requires Python 3.7+ (we recommend [Anaconda](https://www.anaconda.com/products/individual))
+
+First, in your terminal, install the shoji Python package:
+
+```shell
+$ pip install shoji
+```
+
+Next, install [FoundationDB](https://apple.github.io/foundationdb/getting-started-mac.html) (or ask your 
+database adminstrator for a [cluster file](https://apple.github.io/foundationdb/administration.html#foundationdb-cluster-file)).
+
+Finally, using Python, check that you can now connect to the database:
+
+```python
+import shoji
+db = shoji.connect()
+db
+```
+
+Typing `db` alone at the last line above should return a representation of the contents of the database
+(which might be empty at this point).
+
+### First steps
+
+Let's create a workspace and fill it with some data:
+
+```python
+db.scRNA = shoji.Workspace()
+db.scRNA.cells = shoji.Dimension(shape=None)
+db.scRNA.genes = shoji.Dimension(shape=5000)
+db.scRNA.Expression = shoji.Tensor("int16", ("cells", "genes"), np.random.randint(0, 10, size=(1000, 5000), dtype="int16"))
+db.scRNA.Age = shoji.Tensor("uint16", ("cells",), np.random.randint(0, 50, size=1000, dtype="uint16"))
+db.scRNA.GeneLength = shoji.Tensor("uint16", ("genes",), np.random.randint(0, 5000, size=5000, dtype="uint16"))
+db.scRNA.Chromosome = shoji.Tensor("string", ("genes",), np.full(5000, "chr1", dtype="object"))
+```
+
+Now we can query the database using `shoji.filter`s. We'll load the Expression matrix,
+including only rows (`"cells"` dimension) where `Age > 10` and columns (`"genes"` dimension)
+where `GeneLength < 1000`:
+
+```python
+ws = db.scRNA
+view = ws[ws.GeneLength < 1000, ws.Age > 10]
+view.Expression.shape
+# Returns something like (813, 4999)
+```
+
+
+### Learn more
+
+`shoji.workspace`:    Workspaces let you organise collections of data that belong together.
+
+`shoji.tensor`:  Tensors are N-dimensional arrays of numbers, booleans and strings.
+
+`shoji.dimension`:    Named dimensions that constrain tensors.
+
+`shoji.filter`:  Expressions used to select tensor rows.
+
+`shoji.view`:  Creating views of the database through a set of filter expressions.
+
+`shoji.transaction`:    Read and write data using atomic operations.
 
 """
 import fdb

@@ -173,7 +173,6 @@ def create_or_update_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManage
         shape = tensor.shape if existing is not None else (0,) + tensor.shape[1:]  # if this is a new tensor, use shape (0, ...)
         tr[subspace.pack((&#34;tensors&#34;, name))] = pickle.dumps((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + shape)
 
-
 def coerce_dtype(dtype, v) -&gt; Union[int, float, bool, str]:
         if dtype in (&#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;, &#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;):
                 return int(v)
@@ -214,7 +213,7 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
                 indices = np.arange(tensor.shape[0], new_length)
                 # Update the tensor length
                 new_tensor = copy.copy(tensor)
-                new_tensor.shape = (new_length,) + in_tensor.shape[1:]
+                new_tensor.shape = (new_length,) + tensor.shape[1:]
                 create_or_update_tensor(tr, wsm, name, new_tensor)
 
         # Update the index
@@ -444,7 +443,7 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
                                         if row.shape[i - 1] != target_size: 
                                                 raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {target_size} elements long, but shape was {row.shape}&#34;)
                         elif target_size != values.shape[i]:  # type: ignore
-                                raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {target_size} elements long, but shape was {row.shape}&#34;)
+                                raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {target_size} elements long, but shape was {values.shape[i]}&#34;)
                                 
         # Write the values
         for name, values in vals.items():
@@ -566,7 +565,7 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
                                         if row.shape[i - 1] != target_size: 
                                                 raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {target_size} elements long, but shape was {row.shape}&#34;)
                         elif target_size != values.shape[i]:  # type: ignore
-                                raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {target_size} elements long, but shape was {row.shape}&#34;)
+                                raise ValueError(f&#34;Tensor &#39;{name}&#39; dimension {i} (&#39;{idim}&#39;) must be exactly {target_size} elements long, but shape was {values.shape[i]}&#34;)
                                 
         # Write the values
         for name, values in vals.items():
@@ -999,7 +998,7 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
                 indices = np.arange(tensor.shape[0], new_length)
                 # Update the tensor length
                 new_tensor = copy.copy(tensor)
-                new_tensor.shape = (new_length,) + in_tensor.shape[1:]
+                new_tensor.shape = (new_length,) + tensor.shape[1:]
                 create_or_update_tensor(tr, wsm, name, new_tensor)
 
         # Update the index

@@ -1,9 +1,79 @@
 """
-Filters are expressions used to read and write selected rows from the database. They are typically
-used to create `shoji.view.View`s of the database, by applying filters to the workspace using the
-slicing expression `[]`.
 
-## Constant comparisons
+## Using filters
+
+Filters are expressions used to select tensor rows, for reading or writing to the database.
+Filters can be applied to a workspace, dimension or tensor using the slicing expression `[]`.
+
+### Applying filters to tensors
+
+Filtering on a tensor selects rows of that tensor, returning a `numpy.ndarray`:
+
+```python
+vals = ws.scRNA.Age[ws.scRNA.Tissue == "Cortex"]
+# Returns those rows of Age where Tissue equals "Cortex"
+```
+
+Assigning values (which must be a `numpy.ndarray` of the right shape and `dtype`) to a 
+filtered tensor causes the corresponding tensor rows in the database to be updated:
+
+```python
+vals = np.array(...)  # A numpy array of the right shape and dtype
+ws.scRNA.Age[ws.scRNA.Tissue == "Cortex"] = vals
+# Those rows of Age where Tissue equals "Cortex" are updated
+```
+
+Assigning values in this way is an atomic operation (it will either succeed or fail
+completely), and is subject to the [size and time limits](file:///Users/stelin/shoji/html/shoji/index.html#limitations) of shoji transactions.
+
+### Applying filters to dimensions
+
+Filtering on a dimension selects rows of that dimension and returns a `shoji.view.View`.
+You can then read tensors from the view, or assign values to tensors through the view:
+
+```python
+view = ws.scRNA.cells[:10]
+# A view that includes the first ten rows along the 'cells' dimension
+t = view.Tissue # Returns a numpy.ndarray of the first ten values of the Tissue tensor 
+a = view.Age  # Returns a numpy.ndarray of the first ten values of the Age tensor
+view.Age = vals  # assign a np.ndarray of suitable shape and dtype
+```
+
+Assigning values in this way is an atomic operation (it will either succeed or fail
+completely), and is subject to the [size and time limits](file:///Users/stelin/shoji/html/shoji/index.html#limitations) of shoji transactions.
+
+
+### Applying filters to workspaces
+
+Recall that workspaces may contain multiple dimensions. When filtering on a workspace,
+the dimension that the filter applies to is inferred from the expression. For example,
+if the filter expression is `ws.Age > 10` and `Age` is a tensor with `dims=("cells",)`,
+then the filter expression applies along the `cells` dimension.
+
+Filtering on a workspace selects rows of the inferred dimension and returns a `shoji.view.View`.
+You can then read tensors from the view, or assign values to tensors through the view as above.
+
+However, when filtering on workspaces, you can also simultaneously filter on multiple dimensions,
+by providing two or more filter expressions separated by comma:
+
+```python
+ws = db.scRNA
+ws.cells = shoji.Dimension(shape=None)
+ws.genes = shoji.Dimension(shape=31768)
+ws.Age = shoji.Tensor("string", ("cells",))
+ws.Chromosome = shoji.Tensor("string", ("genes",))
+# Slice both dimensions:
+view = ws.scRNA[ws.Age > 10, ws.Chromosome == "chr1"]
+```
+
+Creating views on workspaces like this is a powerful way to focus on a defined subset of the dataset.
+
+To work with views, see the `shoji.view` API reference.
+
+
+## Kinds of filters
+
+### Comparisons
 
 You can compare a tensor to a constant:
 
@@ -12,19 +82,61 @@ ws = db.cancer_project
 view = ws[ws.Age > 12]  # Create a view of the workspace including only samples where Age > 12
 ```
 
+Or compare a two tensors:
+
+```python
+ws = db.cancer_project
+view = ws[ws.Age == ws.OriginalAge]  # Create a view of the workspace including only samples where Age == OriginalAge
+```
+
 Comparison operators `==`, `!=`, `>`, `>=`, `<`. `<=` are supported.
 
-## Compound filters
 
-You can combine filters using `&` (and), `|` (or) and `~` (not). Make sure to use parentheses
-around the individual filter expressions:
+### Slices
+
+You can use Python slices on dimensions and tensors (but not on workspaces):
+
+```python
+ws = db.cancer_project
+view = ws.samples[3:10]  # Create a view along the 'samples' dimension including only rows 3 - 9 (zero-based)
+```
+
+
+### Index arrays
+
+You can use lists, tuples or np.ndarrays of integers to select rows on dimensions and tensors (but not on workspaces):
+
+```python
+ws = db.cancer_project
+indices = ...  # An np.ndarray of integers designating the desired rows
+view = ws.samples[indices]
+```
+
+
+### Boolean arrays
+
+You can use lists, tuples or np.ndarrays of bools to select rows on dimensions and tensors (but not on workspaces):
+
+```python
+ws = db.cancer_project
+selected = ...  # An np.ndarray of bools designating the desired rows
+view = ws.samples[selected]
+```
+
+
+### Compound filters
+
+You can combine filters using `&` (and), `|` (or), `~` (not), `^` (xor), and `-` (set difference). 
+
+**Note:** The individual filter expressions must be surrounded by parentheses:
 
 ```python
 ws = db.cancer_project
 view = ws[(ws.Age > 12) & (ws.SampleID < 10)]
 ```
 
-
+The set difference operator `-` returns all rows selected by the left-hand expression except
+those selected by the right-hand expression.
 
 """
 from typing import Union, Optional
@@ -67,7 +179,7 @@ class Filter:
 		return self._combine("-", self, other)
 
 	def __rsub__(self, other: Union["Filter", "shoji.View"]) -> "Filter":
-		return other._combine("-", other, self)
+		return self._combine("-", other, self)
 
 	def __xor__(self, other: Union["Filter", "shoji.View"]) -> "Filter":
 		return self._combine("^", self, other)

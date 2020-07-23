@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.8.1" />
 <title>shoji.connect API documentation</title>
-<meta name="description" content="Connecting to a Shoji database cluster." />
+<meta name="description" content="Connecting to a Shoji database cluster …" />
 <link href='https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.0/normalize.min.css' rel='stylesheet'>
 <link href='https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/8.0.0/sanitize.min.css' rel='stylesheet'>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
@@ -21,12 +21,25 @@
 </header>
 <section id="section-intro">
 <p>Connecting to a Shoji database cluster.</p>
+<p>To connect to a shoji database, typically you just need to do this:</p>
+<pre><code class="python">db = shoji.connect()
+</code></pre>
+<p>This returns an object <code>db</code> representing the root <code><a title="shoji.workspace.Workspace" href="workspace.html#shoji.workspace.Workspace">Workspace</a></code>.</p>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">&#34;&#34;&#34;
 Connecting to a Shoji database cluster.
+
+To connect to a shoji database, typically you just need to do this:
+
+```python
+db = shoji.connect()
+```
+
+This returns an object `db` representing the root `shoji.workspace.Workspace`.
+
 &#34;&#34;&#34;
 import fdb
 import shoji
@@ -38,7 +51,7 @@ def connect(cluster_file=None, event_model=None) -&gt; shoji.WorkspaceManager:
 
         Args:
                 cluster_file: The FoundationDB cluster file to use (or None to use the default)
-                event_model: Addtional FoundationDB parameters
+                event_model: Additional FoundationDB parameters
 
         Remarks:
                 The cluster file should normally not be explicitly provided as an argument to this function.
@@ -73,7 +86,7 @@ def connect(cluster_file=None, event_model=None) -&gt; shoji.WorkspaceManager:
 <dt><strong><code>cluster_file</code></strong></dt>
 <dd>The FoundationDB cluster file to use (or None to use the default)</dd>
 <dt><strong><code>event_model</code></strong></dt>
-<dd>Addtional FoundationDB parameters</dd>
+<dd>Additional FoundationDB parameters</dd>
 </dl>
 <h2 id="remarks">Remarks</h2>
 <p>The cluster file should normally not be explicitly provided as an argument to this function.
@@ -94,7 +107,7 @@ Instead, it will be located automatically by searching these locations:</p>
 
         Args:
                 cluster_file: The FoundationDB cluster file to use (or None to use the default)
-                event_model: Addtional FoundationDB parameters
+                event_model: Additional FoundationDB parameters
 
         Remarks:
                 The cluster file should normally not be explicitly provided as an argument to this function.

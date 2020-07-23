@@ -2,19 +2,38 @@
 Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
 constrained to have the same number of elements along that axis. 
 
+..image:: assets/bitmap/tensor_dims@2x.png
+
+## Overview
+
+Dimensions must be defined in the `shoji.workspace.Workspace` before they can be used:
+
+```python
+db = shoji.connect()
+db.scRNA = shoji.Workspace()
+db.scRNA.cells = shoji.Dimension(shape=None)
+db.scRNA.genes = shoji.Dimension(shape=5000)
+```
+
+Once the dimensions have been declared, tensors can use those dimensions:
+
+```python
+db.scRNA.Expression = shoji.Tensor("int16", ("cells", "genes"))
+db.scRNA.CellType = shoji.Tensor("string", ("cells",))
+db.scRNA.Length = shoji.Tensor("uint16", ("genes",))
+db.scRNA.Chromosome = shoji.Tensor("string", ("genes",))
+```
+
 ## Adding data along a dimension
 
 In order to ensure that the dimension constraints are always fulfilled, data must be added
-in parallel to all tensors that share a dimension, using the `append()` method. For example, 
-to add samples to a project with a `samples` dimension:
+in parallel to all tensors that share a dimension, using the `append()` method on the 
+dimension. For example, to add cells to a project with a `cells` dimension:
 
 ```python
-ws = db.cancer_project
-ws.samples.append({
-	"SampleID": np.array([1, 2, 3, 4]),
-	"SampleName": np.array(["Sample 1", "Sample 2", "Sample 3", "Sample 4"]),
-	"Age": np.array([10, 23, 21, 24]),
-	"Description": np.array(["", "", "", ""])
+db.scRNA.cells.append({
+	"CellType": np.array(["Neuron", "Astrocyte", "Neuron", "Miroglia"], dtype=object),
+	"Expression": np.random.randint(0, 10, size=(4, 5000), dtype="uint16")
 })
 ```
 
@@ -24,7 +43,7 @@ dimension), or supply data of inconsistent shape, the append method will raise a
 Appending data using this method is guaranteed to never fail with a partial row written (but may not
 complete all the rows successfully), and will never leave the database in an inconsistent state 
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
-wrap the append() in a `shoji.transaction.Transaction`.
+wrap the `append()` in a `shoji.transaction.Transaction`.
 """
 from typing import Optional, Dict
 import numpy as np
@@ -73,9 +92,6 @@ class Dimension:
 		Args:
 			vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
 
-		Returns:
-			n_rows: the number of rows actually appended
-
 		Remarks:
 			The method is transactional, i.e. it's guaranteed to either succeed or
 			fail without leaving the database in an inconsistent state. If it fails, 
@@ -92,13 +108,25 @@ class Dimension:
 			elif len(values) != n_rows:
 				raise ValueError(f"Length (along first dimension) of tensors must be the same when appending")
 
-		# Total size of the transaction (for jagged arrays, sum of row sizes)
-		n_bytes = sum([(n.size * n.itemsize if isinstance(n, np.ndarray) else (sum(i.size * i.itemsize) for i in n)) for n in vals.values()])
-		n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we'll also be compressing the rows when writing
-		n_rows_per_transaction = max(1, n_rows // n_batches)
+		# Total size of the transaction (for jagged arrays, sum of row sizes; for strings sum of string lengths)
+		n_bytes = 0
+		for name, val in vals.items():
+			if isinstance(val, np.ndarray):
+				if np.issubdtype(val.dtype,  np.object_):
+					n_bytes += sum([len(s) for s in val]) * 2
+				else:
+					n_bytes += val.size * val.itemsize
+			else:
+				for row in val:
+					if np.issubdtype(val.dtype,  np.object_):
+						n_bytes += sum([len(s) for s in row]) * 2
+					else:
+						n_bytes += row.size * row.itemsize
+		print(n_bytes)
+		n_rows_per_transaction = int(max(1, n_rows / (n_bytes / 5_000_000))) # Should be plenty, given that we'll also be compressing the rows when writing
 		ix: int = 0
 		while ix < n_rows:
-			with shoji.Transaction(self.wsm):
-				batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-				shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
+			batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
+			print(batch)
+			shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
 			ix += n_rows_per_transaction

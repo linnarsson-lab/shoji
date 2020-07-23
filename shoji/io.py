@@ -57,8 +57,10 @@ def get_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str)
 	subspace = wsm._subspace
 	# ("tensors", name) = (tensor.dtype, tensor.rank, tensor.jagged) + tensor.dims + shape
 	# where shape[0] == -1 if jagged
+#	print("get", name)
 	val = tr[subspace.pack(("tensors", name))]
 	if val.present():
+#		print("got", name)
 		t = pickle.loads(val.value)
 		if t[1] > 0:
 			shape = t[-t[1]:]
@@ -144,8 +146,9 @@ def create_or_update_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManage
 	# where shape[0] == -1 if jagged, and tuple value is encoded using pickle
 	subspace = wsm._subspace
 	shape = tensor.shape if existing is not None else (0,) + tensor.shape[1:]  # if this is a new tensor, use shape (0, ...)
-	tr[subspace.pack(("tensors", name))] = pickle.dumps((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + shape)
-
+	data = pickle.dumps((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + shape)
+	#print(name, len(data))
+	tr[subspace.pack(("tensors", name))] = data
 
 def coerce_dtype(dtype, v) -> Union[int, float, bool, str]:
 	if dtype in ("uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64"):
@@ -171,6 +174,8 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 		indices     A vector of row indices where the inits should be written, or None to append at end of tensor
 	"""
 	subspace = wsm._subspace
+	prev = tr[b'\x16\x01\x94\x02tensor_values\x00\x02Accession\x00\x15\x0f\x14']
+	print(prev, prev.present())
 	tensor = get_tensor(tr, wsm, name)
 	codec = shoji.Codec(tensor.dtype)
 	assert in_tensor.inits is not None
@@ -187,7 +192,7 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 		indices = np.arange(tensor.shape[0], new_length)
 		# Update the tensor length
 		new_tensor = copy.copy(tensor)
-		new_tensor.shape = (new_length,) + in_tensor.shape[1:]
+		new_tensor.shape = (new_length,) + tensor.shape[1:]
 		create_or_update_tensor(tr, wsm, name, new_tensor)
 
 	# Update the index
@@ -207,20 +212,28 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 		rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (in_tensor.inits.size // in_tensor.inits.shape[0]))))
 		if rows_per_chunk > 1:
 			chunks = indices // rows_per_chunk
+			print(np.unique(chunks))
 			for chunk in np.unique(chunks):
 				vals = in_tensor.inits[chunks == chunk]
 				if len(vals) < rows_per_chunk:
 					# Need to read the previous tensor values and update them first
 					prev = tr[subspace.pack(("tensor_values", name, int(chunk), 0))]
+					print(prev is None)
+					print("prev", subspace.pack(("tensor_values", name, int(chunk), 0)))
 					if prev.present():
+						print("prev present")
 						prev_vals = codec.decode(prev.value)
 					else:
+						print("prev not present")
 						prev_vals = np.zeros((rows_per_chunk,) + in_tensor.shape[1:], dtype=tensor.numpy_dtype())
 					ixs = indices[chunks == chunk]
 					prev_vals[np.mod(ixs, rows_per_chunk)] = vals
 					vals = prev_vals
 				key = subspace.pack(("tensor_values", name, int(chunk), 0))
-				tr[key] = codec.encode(vals)
+				encoded = codec.encode(vals)
+				print("encoded", name, chunk, len(encoded))
+				tr[key] = encoded
+				print("wrote", name, chunk, len(encoded))
 			return
 		# Falls through to the code below
 
@@ -289,6 +302,12 @@ def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, na
 	if tensor.rank == 0:  # It's a scalar value
 		key = subspace.pack(("tensor_values", name) + (0, 0))
 		return codec.decode(tr[key].value).item()
+
+	if tensor.shape[0] == 0:
+		if tensor.jagged:
+			return []
+		else:
+			return np.zeros(tensor.shape, dtype=tensor.numpy_dtype())
 
 	if tensor.jagged:
 		resultj: List[np.ndarray] = []
@@ -417,7 +436,7 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
 					if row.shape[i - 1] != target_size: 
 						raise ValueError(f"Tensor '{name}' dimension {i} ('{idim}') must be exactly {target_size} elements long, but shape was {row.shape}")
 			elif target_size != values.shape[i]:  # type: ignore
-				raise ValueError(f"Tensor '{name}' dimension {i} ('{idim}') must be exactly {target_size} elements long, but shape was {row.shape}")
+				raise ValueError(f"Tensor '{name}' dimension {i} ('{idim}') must be exactly {target_size} elements long, but shape was {values.shape[i]}")
 				
 	# Write the values
 	for name, values in vals.items():

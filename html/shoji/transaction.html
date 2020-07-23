@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.8.1" />
 <title>shoji.transaction API documentation</title>
-<meta name="description" content="Transactions, supporting atomic multi-statement operations." />
+<meta name="description" content="Transactions, supporting atomic multi-statement operations. Usage: …" />
 <link href='https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.0/normalize.min.css' rel='stylesheet'>
 <link href='https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/8.0.0/sanitize.min.css' rel='stylesheet'>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
@@ -20,13 +20,27 @@
 <h1 class="title">Module <code>shoji.transaction</code></h1>
 </header>
 <section id="section-intro">
-<p>Transactions, supporting atomic multi-statement operations.</p>
+<p>Transactions, supporting atomic multi-statement operations. Usage:</p>
+<pre><code class="python">with shoji.Transaction():
+    # code that executes atomically
+</code></pre>
+<p>Transactions are subject to <a href="file:///Users/stelin/shoji/html/shoji/index.html#limitations">size and time limits</a>.</p>
+<p>Note that shoji guarantees row-level database consistency without the use of explicit transactions.</p>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">&#34;&#34;&#34;
-Transactions, supporting atomic multi-statement operations.
+Transactions, supporting atomic multi-statement operations. Usage:
+
+```python
+with shoji.Transaction():
+    # code that executes atomically
+```
+
+Transactions are subject to [size and time limits](file:///Users/stelin/shoji/html/shoji/index.html#limitations).
+
+Note that shoji guarantees row-level database consistency without the use of explicit transactions.
 &#34;&#34;&#34;
 import shoji
 

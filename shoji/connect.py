@@ -1,5 +1,14 @@
 """
 Connecting to a Shoji database cluster.
+
+To connect to a shoji database, typically you just need to do this:
+
+```python
+db = shoji.connect()
+```
+
+This returns an object `db` representing the root `shoji.workspace.Workspace`.
+
 """
 import fdb
 import shoji
@@ -11,7 +20,7 @@ def connect(cluster_file=None, event_model=None) -> shoji.WorkspaceManager:
 
 	Args:
 		cluster_file: The FoundationDB cluster file to use (or None to use the default)
-		event_model: Addtional FoundationDB parameters
+		event_model: Additional FoundationDB parameters
 
 	Remarks:
 		The cluster file should normally not be explicitly provided as an argument to this function.
@@ -25,5 +34,5 @@ def connect(cluster_file=None, event_model=None) -> shoji.WorkspaceManager:
 	"""
 	db = fdb.open(cluster_file=cluster_file, event_model=event_model)
 	db.transaction = db  # default to using the Database object for transactions
-	subspace = fdb.directory.create_or_open(db, ("shoji",))
-	return shoji.WorkspaceManager(db, subspace, ())
+	subdir = fdb.directory.create_or_open(db, ("shoji",))
+	return shoji.WorkspaceManager(db, subdir, ())

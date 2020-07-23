@@ -8,7 +8,8 @@ of common dimensions exist only within a single workspace.
 
 A Workspace is a bit like a collection of tables in a relational database, or a collection of
 Pandas DataFrames. Each dimension in a workspace corresponds to a table, and each tensor with
-that dimension as its first dimension corresponds to a column in the table.
+that dimension as its first dimension corresponds to a column in the table. However, workspaces
+can also contain tensors that link two or more dimensions.
 
 For example, a simple table of samples, with columns for sample ID, name, age and description
 could be modelled as follows:
@@ -142,7 +143,7 @@ class WorkspaceManager:
 		return shoji.io.get_entity(self._db.transaction, self, name) is not None
 
 	def __getattr__(self, name: str) -> Union["WorkspaceManager", shoji.Dimension, shoji.Tensor]:
-		if name.startswith("__"):  # Jupyter calls this method with name = "__wrapped__" and we want to avoid a futile database roundtrip
+		if name.startswith("_"):  # Jupyter calls this method with names like "__wrapped__" and we want to avoid a futile database roundtrip
 			return super().__getattribute__(name)
 		result = shoji.io.get_entity(self._db.transaction, self, name)
 		if result is None:
@@ -154,6 +155,9 @@ class WorkspaceManager:
 		# Try to read an attribute on the object
 		if isinstance(expr, str):
 			return self.__getattr__(expr)
+		# Perhaps it's a view already (e.g. a slice of a dimension)
+		if isinstance(expr, shoji.View):
+			return expr
 		# Maybe it's a Filter, or a tuple of Filters?
 		if isinstance(expr, shoji.Filter):
 			return shoji.View(self, (expr,))
@@ -216,18 +220,15 @@ class WorkspaceManager:
 			self.genes = shoji.Dimension(shape=None)
 			self.cells = shoji.Dimension(shape=None)
 
-			STEP = 2000
 			logging.info("Loading row attributes")
-			for i in trange(0, ds.shape[0], STEP):
-				d = {}
-				for key, vals in ds.ra.items():
-					dtype = vals.dtype.name
-					name = key[0].upper() + key[1:]
-					d[name] = ds.ra[key][i:i + STEP]
-					if i == 0:
-						dims = ("genes", ) + (None,) * (vals.ndim - 1)
-						self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
-				self.genes.append(d)
+			d = {}
+			for key, vals in ds.ra.items():
+				dtype = vals.dtype.name
+				name = key[0].upper() + key[1:]
+				d[name] = ds.ra[key]
+				dims = ("genes", ) + (None,) * (vals.ndim - 1)
+				self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
+			self.genes.append(d)
 
 			self.genes = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
 			

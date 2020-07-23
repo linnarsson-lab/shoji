@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.8.1" />
 <title>shoji.tensor API documentation</title>
-<meta name="description" content="Tensors, representing multidimensional arrays of numbers or strings." />
+<meta name="description" content="All data in Shoji is stored as N-dimensional tensors. A tensor is a
+generalisation of scalars, vectors and matrices to N dimensions …" />
 <link href='https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.0/normalize.min.css' rel='stylesheet'>
 <link href='https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/8.0.0/sanitize.min.css' rel='stylesheet'>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
@@ -20,13 +21,315 @@
 <h1 class="title">Module <code>shoji.tensor</code></h1>
 </header>
 <section id="section-intro">
-<p>Tensors, representing multidimensional arrays of numbers or strings.</p>
+<p>All data in Shoji is stored as N-dimensional tensors. A tensor is a
+generalisation of scalars, vectors and matrices to N dimensions. </p>
+<p>The atomic unit of storage is the <em>row</em>. Tensors are read and written by row,
+and tensors can grow (only) by rows.</p>
+<h2 id="overview">Overview</h2>
+<p>Tensors are defined by their <em>rank</em>, <em>datatype</em>, <em>dimensions</em> and <em>shape</em>.</p>
+<p><img alt="" src="assets/bitmap/tensor_rank@2x.png"></p>
+<p>Tensors are created like this:</p>
+<pre><code class="python">import shoji
+tissues = ...        # Assume we have an np.ndarray of tissue names
+db = shoji.connect() # Connect to the database
+ws = db.scRNA        # scRNA is a Workspace in the database, previously created
+
+ws.Tissue = shoji.Tensor(&quot;string&quot;, (&quot;cells&quot;,), tissues)
+</code></pre>
+<p>The tensor is declared with a datatype <code>"string"</code>, a tuple of dimensions <code>("cells",)</code> and an optional <code>np.ndarray</code> of initial values.</p>
+<h3 id="rank">Rank</h3>
+<p>The <em>rank</em> of a tensor is the number of dimensions of the tensor. A scalar
+value has rank 0, a vector has rank 1, and a matrix has rank 2. Higher ranks
+are possible; for example, a vector of 2D images would have rank 3, and a
+timelapse recording in three color channels would have rank 6 (time, width, height,
+three colors).</p>
+<h3 id="datatype">Datatype</h3>
+<p>Tensors support the following datatypes: </p>
+<pre><code class="python">&quot;bool&quot;
+&quot;uint8&quot;, &quot;uint16&quot;, &quot;uint32&quot;, &quot;uint64&quot;
+&quot;int8&quot;, &quot;int16&quot;, &quot;int32&quot;, &quot;int64&quot;
+&quot;float16&quot;, &quot;float32&quot;, &quot;float64&quot;
+&quot;string&quot;
+</code></pre>
+<p>The datatype of a tensor must always be declared; there is no default type.</p>
+<p>When a tensor is created, any initial values provided (via the <code>inits</code> argument) must have the matching numpy datatype. The bool and numeric datatypes match 1:1 with numpy dtypes. </p>
+<p>However, the Shoji <code>string</code> datatype is a Unicode string of variable length, which corresponds to a numpy array of string objects. That is, the corresponding numpy datatype is <em>not</em> <code>str</code> or <code>"unicode"</code>. Instead, Shoji string tensors correspond to numpy <code>object</code> arrays whose elements are Python <code>str</code> objects. You can cast a numpy <code>str</code> array to an <code>object</code> array as follows:</p>
+<pre><code class="python">import numpy as np
+s = np.array([&quot;dog&quot;, &quot;cat&quot;, &quot;apple&quot;, &quot;orange&quot;])  # s.dtype.kind == 'U'
+t = s.astype(object)  # t.dtype.kind == 'O'
+# Or directly, using dtype
+s = np.array([&quot;dog&quot;, &quot;cat&quot;, &quot;apple&quot;, &quot;orange&quot;], dtype=&quot;object&quot;)
+</code></pre>
+<p>The reason for this discrepancy is that numpy <code>str</code> arrays store only fixed-length strings, whereas Shoji <code>string</code> tensors store strings of variable length.</p>
+<h3 id="dimensions">Dimensions</h3>
+<p>When creating a tensor, its dimensions must be declared using a tuple.
+Scalars have rank zero, and are declared with the empty tuple <code>()</code>.
+Vectors have rank one, and are declared with a single-element tuple, e.g.
+<code>(20,)</code> (note the comma, which is necessary). Matrices have rank 2, and are
+declared with a two-element tuple, e.g. <code>(20, 40)</code>. Higher-rank tensors are
+declared with correspondingly longer tuples. </p>
+<p>Dimensions can be fixed or variable-length. A fixed-length dimension is
+declared with an integer specifying the number of elements of the dimension.
+A variable-length dimension is declared as <code>None</code>. For example, <code>(10, None)</code>
+is a matrix with ten rows and a variable number of columns (also known as a
+jagged array).</p>
+<p>The meaning of a variable-length first dimension is slightly different. The
+first dimension cannot be jagged, but if it's declared variable-length then
+the tensor can grow over time. Thus a tensor declared with
+<code>dims=(None, 10)</code> is not jagged (at any point in time it has a fixed number of
+rows and columns), but rows can be appended (see <code><a title="shoji.dimension" href="dimension.html">shoji.dimension</a></code> and <code><a title="shoji.dimension.Dimension.append" href="dimension.html#shoji.dimension.Dimension.append">Dimension.append()</a></code>).</p>
+<p>Each dimension of a tensor can be named, and named dimensions (within a
+<code><a title="shoji.workspace.Workspace" href="workspace.html#shoji.workspace.Workspace">Workspace</a></code>) are constrained to have the same number of elements.
+For example, if two tensors are declared with dimensions <code>("cells",)</code>
+and <code>("cells", "genes")</code>, then the first dimensions are guaranteed to have
+the same number of elements, which are assumed to be in the same order.</p>
+<p>Named dimensions must be declared before they are used; see <code><a title="shoji.dimension" href="dimension.html">shoji.dimension</a></code>.</p>
+<h3 id="shape">Shape</h3>
+<p>The <code>shape</code> of a <code><a title="shoji.tensor.Tensor" href="#shoji.tensor.Tensor">Tensor</a></code> is a tuple of integers that gives the current
+shape of the tensor as stored in the database. For example, a tensor with <code>dims=(None, 10, 20)</code>
+might have <code>shape=(10, 10, 20)</code>, indicating that currently the tensor has ten rows. Since
+the first dimension is variable-length (in this case), rows might be appended later, and the shape
+would change to reflect the new number of rows.</p>
+<h2 id="key-concept-rows">Key concept: rows</h2>
+<p>The <em>row</em> is the atomic unit of data storage in Shoji. For an N-dimensional tensor, the rows are
+the slices of the tensor along the first dimension:</p>
+<ul>
+<li>For a scalar, the single row is the entire scalar.</li>
+<li>For a vector, the rows are the elements of the vector.</li>
+<li>For a matrix, the rows are the rows of the matrix.</li>
+<li>For a 3D tensor, the rows are the matrices along the first dimension, and so on for higher-rank tensors.</li>
+</ul>
+<p>Data in Shoji is stored and retrieved as individual rows. In other words,
+you can retrieve selected elements of a vector, or selected rows of a matrix,
+but you cannot retrieve the individual columns of a matrix. </p>
+<p>You should think of the rows of a tensor as your <em>objects</em>, and each tensor
+as an attribute of the objects. Multiple attributes (tensors) are linked
+by sharing named dimensions. For example, to store a gene expression matrix
+along with two metadata attributes, make <code>"cells"</code> the first dimension (so
+that you can add cells), and create two tensors:</p>
+<pre><code class="python">ws.cells = shoji.Dimension(shape=None)  # None means variable length
+ws.genes = shoji.Dimension(shape=32125)
+ws.Expression = shoji.Tensor(&quot;unit16&quot;, (&quot;cells&quot;, &quot;genes&quot;))
+ws.Tissue = shoji.Tensor(&quot;string&quot;, (&quot;cells&quot;,))
+ws.Age = shoji.Tensor(&quot;uint16&quot;, (&quot;cells&quot;,))
+</code></pre>
+<p>The three tensors <code>Expression</code>, <code>Tissue</code> and
+<code>Age</code> share their first
+dimension <code>cells</code>, which ensures that they will always have the same number
+of rows (and are assumed to be in the same order).</p>
+<p>If the size of the first dimension is variable (declared as <code>None</code>),
+then rows can be added and removed. However, shoji makes sure that the same
+number of rows is added to all tensors with the same first dimension, so that
+they remain consistent with each other. When two or more tensors share the first
+dimension (and it's declared variable-length), then you can only append rows
+simultaneously to all those tensors (using <code><a title="shoji.dimension.Dimension.append" href="dimension.html#shoji.dimension.Dimension.append">Dimension.append()</a></code>). </p>
+<h2 id="jagged-tensors">Jagged tensors</h2>
+<p>If any non-first dimension is declared with variable size, then the tensor is
+<em>jagged</em>. This means that the size along those dimensions can be different for
+different rows. For example:</p>
+<pre><code class="python">ws.cells = shoji.Dimension(shape=None)
+ws.Image = shoji.Tensor(&quot;uint16&quot;, (&quot;cells&quot;, None, None))
+</code></pre>
+<p>In this example, we declare a 3D jagged tensor <code>Image</code>, where dimensions 2 and 3
+are variable-length. This could be used to store 2D images of cells, each of which
+has a different width and height. The first dimension represents the objects
+(individual cells) and the 2nd and 3rd dimensions represent the images. Accessing
+a single row of this tensor would return a single 2D image matrix. Accessing a set
+of rows would return a list of 2D images.</p>
+<p>In a similar way, we could store multichannel timelapse images of cells:</p>
+<pre><code class="python">ws.cells = shoji.Dimension(shape=None)
+ws.channels = shoji.Dimension(shape=3)
+ws.timepoints = shoji.Dimension(shape=1200)  # 1200 timepoints
+ws.Image = shoji.Tensor(&quot;uint16&quot;, (&quot;cells&quot;, &quot;channels&quot;, &quot;timepoints&quot;, None, None))
+</code></pre>
+<p>In this examples, <code>Image</code> is a 5-dimensional tensor, where the last two dimensions
+have variable length.</p>
+<p>Note again that tensors are read and written by row (elements of the first dimension). </p>
+<p>There is a 5 second limit on the maximum duration of a read or write, which implicitly
+limits the total size of the row of a tensor. If all the data for a single row cannot
+be retrieved in less than five seconds, you will have to redesign the data model (e.g.
+breaking out some dimensions to a separate tensor).</p>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">&#34;&#34;&#34;
-Tensors, representing multidimensional arrays of numbers or strings.
+All data in Shoji is stored as N-dimensional tensors. A tensor is a
+generalisation of scalars, vectors and matrices to N dimensions. 
+
+The atomic unit of storage is the *row*. Tensors are read and written by row,
+and tensors can grow (only) by rows.
+
+## Overview
+
+Tensors are defined by their *rank*, *datatype*, *dimensions* and *shape*.
+
+..image:: assets/bitmap/tensor_rank@2x.png
+
+Tensors are created like this:
+
+```python
+import shoji
+tissues = ...        # Assume we have an np.ndarray of tissue names
+db = shoji.connect() # Connect to the database
+ws = db.scRNA        # scRNA is a Workspace in the database, previously created
+
+ws.Tissue = shoji.Tensor(&#34;string&#34;, (&#34;cells&#34;,), tissues)
+```
+
+The tensor is declared with a datatype `&#34;string&#34;`, a tuple of dimensions `(&#34;cells&#34;,)` and an optional `np.ndarray` of initial values.
+
+### Rank
+
+The *rank* of a tensor is the number of dimensions of the tensor. A scalar 
+value has rank 0, a vector has rank 1, and a matrix has rank 2. Higher ranks
+are possible; for example, a vector of 2D images would have rank 3, and a
+timelapse recording in three color channels would have rank 6 (time, width, height,
+three colors).
+
+### Datatype
+
+Tensors support the following datatypes: 
+
+```python
+&#34;bool&#34;
+&#34;uint8&#34;, &#34;uint16&#34;, &#34;uint32&#34;, &#34;uint64&#34;
+&#34;int8&#34;, &#34;int16&#34;, &#34;int32&#34;, &#34;int64&#34;
+&#34;float16&#34;, &#34;float32&#34;, &#34;float64&#34;
+&#34;string&#34;
+```
+
+The datatype of a tensor must always be declared; there is no default type.
+
+When a tensor is created, any initial values provided (via the `inits` argument) must have the matching numpy datatype. The bool and numeric datatypes match 1:1 with numpy dtypes. 
+
+However, the Shoji `string` datatype is a Unicode string of variable length, which corresponds to a numpy array of string objects. That is, the corresponding numpy datatype is *not* `str` or `&#34;unicode&#34;`. Instead, Shoji string tensors correspond to numpy `object` arrays whose elements are Python `str` objects. You can cast a numpy `str` array to an `object` array as follows:
+
+```python
+import numpy as np
+s = np.array([&#34;dog&#34;, &#34;cat&#34;, &#34;apple&#34;, &#34;orange&#34;])  # s.dtype.kind == &#39;U&#39;
+t = s.astype(object)  # t.dtype.kind == &#39;O&#39;
+# Or directly, using dtype
+s = np.array([&#34;dog&#34;, &#34;cat&#34;, &#34;apple&#34;, &#34;orange&#34;], dtype=&#34;object&#34;)
+```
+
+The reason for this discrepancy is that numpy `str` arrays store only fixed-length strings, whereas Shoji `string` tensors store strings of variable length.
+
+### Dimensions
+
+When creating a tensor, its dimensions must be declared using a tuple. 
+Scalars have rank zero, and are declared with the empty tuple `()`. 
+Vectors have rank one, and are declared with a single-element tuple, e.g. 
+`(20,)` (note the comma, which is necessary). Matrices have rank 2, and are
+declared with a two-element tuple, e.g. `(20, 40)`. Higher-rank tensors are 
+declared with correspondingly longer tuples. 
+
+Dimensions can be fixed or variable-length. A fixed-length dimension is 
+declared with an integer specifying the number of elements of the dimension.
+A variable-length dimension is declared as `None`. For example, `(10, None)` 
+is a matrix with ten rows and a variable number of columns (also known as a
+jagged array).
+
+The meaning of a variable-length first dimension is slightly different. The
+first dimension cannot be jagged, but if it&#39;s declared variable-length then 
+the tensor can grow over time. Thus a tensor declared with 
+`dims=(None, 10)` is not jagged (at any point in time it has a fixed number of
+rows and columns), but rows can be appended (see `shoji.dimension` and `shoji.dimension.Dimension.append`).
+
+Each dimension of a tensor can be named, and named dimensions (within a 
+`shoji.workspace.Workspace`) are constrained to have the same number of elements. 
+For example, if two tensors are declared with dimensions `(&#34;cells&#34;,)` 
+and `(&#34;cells&#34;, &#34;genes&#34;)`, then the first dimensions are guaranteed to have 
+the same number of elements, which are assumed to be in the same order.
+
+Named dimensions must be declared before they are used; see `shoji.dimension`.
+
+
+### Shape
+
+The `shape` of a `shoji.tensor.Tensor` is a tuple of integers that gives the current
+shape of the tensor as stored in the database. For example, a tensor with `dims=(None, 10, 20)`
+might have `shape=(10, 10, 20)`, indicating that currently the tensor has ten rows. Since
+the first dimension is variable-length (in this case), rows might be appended later, and the shape
+would change to reflect the new number of rows.
+
+
+## Key concept: rows
+
+The *row* is the atomic unit of data storage in Shoji. For an N-dimensional tensor, the rows are 
+the slices of the tensor along the first dimension:
+
+- For a scalar, the single row is the entire scalar.
+- For a vector, the rows are the elements of the vector.
+- For a matrix, the rows are the rows of the matrix.
+- For a 3D tensor, the rows are the matrices along the first dimension, and so on for higher-rank tensors.
+
+Data in Shoji is stored and retrieved as individual rows. In other words, 
+you can retrieve selected elements of a vector, or selected rows of a matrix, 
+but you cannot retrieve the individual columns of a matrix. 
+
+You should think of the rows of a tensor as your *objects*, and each tensor 
+as an attribute of the objects. Multiple attributes (tensors) are linked 
+by sharing named dimensions. For example, to store a gene expression matrix 
+along with two metadata attributes, make `&#34;cells&#34;` the first dimension (so 
+that you can add cells), and create two tensors:
+
+```python
+ws.cells = shoji.Dimension(shape=None)  # None means variable length
+ws.genes = shoji.Dimension(shape=32125)
+ws.Expression = shoji.Tensor(&#34;unit16&#34;, (&#34;cells&#34;, &#34;genes&#34;))
+ws.Tissue = shoji.Tensor(&#34;string&#34;, (&#34;cells&#34;,))
+ws.Age = shoji.Tensor(&#34;uint16&#34;, (&#34;cells&#34;,))
+```
+
+The three tensors `Expression`, `Tissue` and  `Age` share their first 
+dimension `cells`, which ensures that they will always have the same number 
+of rows (and are assumed to be in the same order).
+
+If the size of the first dimension is variable (declared as `None`), 
+then rows can be added and removed. However, shoji makes sure that the same
+number of rows is added to all tensors with the same first dimension, so that
+they remain consistent with each other. When two or more tensors share the first
+dimension (and it&#39;s declared variable-length), then you can only append rows
+simultaneously to all those tensors (using `shoji.dimension.Dimension.append`). 
+
+
+## Jagged tensors
+
+If any non-first dimension is declared with variable size, then the tensor is 
+*jagged*. This means that the size along those dimensions can be different for 
+different rows. For example:
+
+```python
+ws.cells = shoji.Dimension(shape=None)
+ws.Image = shoji.Tensor(&#34;uint16&#34;, (&#34;cells&#34;, None, None))
+```
+
+In this example, we declare a 3D jagged tensor `Image`, where dimensions 2 and 3 
+are variable-length. This could be used to store 2D images of cells, each of which 
+has a different width and height. The first dimension represents the objects 
+(individual cells) and the 2nd and 3rd dimensions represent the images. Accessing 
+a single row of this tensor would return a single 2D image matrix. Accessing a set 
+of rows would return a list of 2D images.
+
+In a similar way, we could store multichannel timelapse images of cells:
+
+```python
+ws.cells = shoji.Dimension(shape=None)
+ws.channels = shoji.Dimension(shape=3)
+ws.timepoints = shoji.Dimension(shape=1200)  # 1200 timepoints
+ws.Image = shoji.Tensor(&#34;uint16&#34;, (&#34;cells&#34;, &#34;channels&#34;, &#34;timepoints&#34;, None, None))
+```
+
+In this examples, `Image` is a 5-dimensional tensor, where the last two dimensions 
+have variable length.
+
+Note again that tensors are read and written by row (elements of the first dimension). 
+
+There is a 5 second limit on the maximum duration of a read or write, which implicitly 
+limits the total size of the row of a tensor. If all the data for a single row cannot 
+be retrieved in less than five seconds, you will have to redesign the data model (e.g. 
+breaking out some dimensions to a separate tensor).
 &#34;&#34;&#34;
 from typing import Tuple, Union, List, Optional, Callable
 import numpy as np
@@ -108,11 +411,9 @@ class Tensor:
 
         def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int]) -&gt; np.ndarray:
                 assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
-                # Maybe it&#39;s a Filter, or a tuple of Filters?
+                # Maybe it&#39;s a Filter?
                 if isinstance(expr, shoji.Filter):
                         return shoji.View(self.wsm, (expr,))[self.name]
-                elif isinstance(expr, tuple) and isinstance(expr[0], shoji.Filter):
-                        return shoji.View(self.wsm, expr)[self.name]
                 # Or a slice?
                 if isinstance(expr, slice):
                         if expr.start is None and expr.stop is None:
@@ -125,6 +426,25 @@ class Tensor:
                                 return shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name]
                         elif np.issubdtype(expr.dtype, np.int_):
                                 return shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+                raise KeyError(expr)
+
+        def __setitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int], vals: np.ndarray) -&gt; None:
+                assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
+                # Maybe it&#39;s a Filter?
+                if isinstance(expr, shoji.Filter):
+                        shoji.View(self.wsm, (expr,))[self.name] = vals
+                # Or a slice?
+                if isinstance(expr, slice):
+                        if expr.start is None and expr.stop is None:
+                                shoji.View(self.wsm, ())[self.name] = vals
+                        shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name] = vals
+                if isinstance(expr, (list, tuple, int)):
+                        expr = np.array(expr)
+                if isinstance(expr, np.ndarray):
+                        if np.issubdtype(expr.dtype, np.bool_):
+                                shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name] = vals
+                        elif np.issubdtype(expr.dtype, np.int_):
+                                shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name] = vals
                 raise KeyError(expr)
 
         def numpy_dtype(self) -&gt; str:
@@ -166,6 +486,28 @@ class Tensor:
 
         def __le__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
                 return self._compare(&#34;&lt;=&#34;, other)
+
+        def append(self, vals: np.ndarray) -&gt; None:
+                assert self.wsm is not None, &#34;Cannot append to unbound tensor&#34;
+
+                if self.rank == 0:
+                        raise ValueError(&#34;Cannot append to a scalar&#34;)
+                if isinstance(self.dims[0], str):
+                        if self.wsm is not None:
+                                d = self.wsm[self.dims[0]]
+                                if isinstance(d, shoji.Dimension):
+                                        d.append(vals)
+                        raise ValueError(f&#34;Failed to append along named first dimension {self.dims[0]}&#34;)
+
+                # Total size of the transaction (for jagged arrays, sum of row sizes)
+                n_bytes = (vals.size * vals.itemsize) if isinstance(vals, np.ndarray) else (sum(i.size * i.itemsize) for i in vals)
+                n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we&#39;ll also be compressing the rows when writing
+                n_rows_per_transaction = max(1, len(vals) // n_batches)
+                ix: int = 0
+                while ix &lt; len(vals):
+                        batch = {self.name: vals[ix: ix + n_rows_per_transaction]}
+                        shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
+                        ix += n_rows_per_transaction
 
         def _check_type(self, inits) -&gt; None:
                 # Check that the type is exactly right
@@ -318,11 +660,9 @@ class Tensor:
 
         def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int]) -&gt; np.ndarray:
                 assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
-                # Maybe it&#39;s a Filter, or a tuple of Filters?
+                # Maybe it&#39;s a Filter?
                 if isinstance(expr, shoji.Filter):
                         return shoji.View(self.wsm, (expr,))[self.name]
-                elif isinstance(expr, tuple) and isinstance(expr[0], shoji.Filter):
-                        return shoji.View(self.wsm, expr)[self.name]
                 # Or a slice?
                 if isinstance(expr, slice):
                         if expr.start is None and expr.stop is None:
@@ -335,6 +675,25 @@ class Tensor:
                                 return shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name]
                         elif np.issubdtype(expr.dtype, np.int_):
                                 return shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+                raise KeyError(expr)
+
+        def __setitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int], vals: np.ndarray) -&gt; None:
+                assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
+                # Maybe it&#39;s a Filter?
+                if isinstance(expr, shoji.Filter):
+                        shoji.View(self.wsm, (expr,))[self.name] = vals
+                # Or a slice?
+                if isinstance(expr, slice):
+                        if expr.start is None and expr.stop is None:
+                                shoji.View(self.wsm, ())[self.name] = vals
+                        shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name] = vals
+                if isinstance(expr, (list, tuple, int)):
+                        expr = np.array(expr)
+                if isinstance(expr, np.ndarray):
+                        if np.issubdtype(expr.dtype, np.bool_):
+                                shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name] = vals
+                        elif np.issubdtype(expr.dtype, np.int_):
+                                shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name] = vals
                 raise KeyError(expr)
 
         def numpy_dtype(self) -&gt; str:
@@ -376,6 +735,28 @@ class Tensor:
 
         def __le__(self, other) -&gt; &#34;shoji.Filter&#34;:  # type: ignore
                 return self._compare(&#34;&lt;=&#34;, other)
+
+        def append(self, vals: np.ndarray) -&gt; None:
+                assert self.wsm is not None, &#34;Cannot append to unbound tensor&#34;
+
+                if self.rank == 0:
+                        raise ValueError(&#34;Cannot append to a scalar&#34;)
+                if isinstance(self.dims[0], str):
+                        if self.wsm is not None:
+                                d = self.wsm[self.dims[0]]
+                                if isinstance(d, shoji.Dimension):
+                                        d.append(vals)
+                        raise ValueError(f&#34;Failed to append along named first dimension {self.dims[0]}&#34;)
+
+                # Total size of the transaction (for jagged arrays, sum of row sizes)
+                n_bytes = (vals.size * vals.itemsize) if isinstance(vals, np.ndarray) else (sum(i.size * i.itemsize) for i in vals)
+                n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we&#39;ll also be compressing the rows when writing
+                n_rows_per_transaction = max(1, len(vals) // n_batches)
+                ix: int = 0
+                while ix &lt; len(vals):
+                        batch = {self.name: vals[ix: ix + n_rows_per_transaction]}
+                        shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
+                        ix += n_rows_per_transaction
 
         def _check_type(self, inits) -&gt; None:
                 # Check that the type is exactly right
@@ -427,6 +808,38 @@ class Tensor:
 </dl>
 <h3>Methods</h3>
 <dl>
+<dt id="shoji.tensor.Tensor.append"><code class="name flex">
+<span>def <span class="ident">append</span></span>(<span>self, vals: numpy.ndarray) -> NoneType</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def append(self, vals: np.ndarray) -&gt; None:
+        assert self.wsm is not None, &#34;Cannot append to unbound tensor&#34;
+
+        if self.rank == 0:
+                raise ValueError(&#34;Cannot append to a scalar&#34;)
+        if isinstance(self.dims[0], str):
+                if self.wsm is not None:
+                        d = self.wsm[self.dims[0]]
+                        if isinstance(d, shoji.Dimension):
+                                d.append(vals)
+                raise ValueError(f&#34;Failed to append along named first dimension {self.dims[0]}&#34;)
+
+        # Total size of the transaction (for jagged arrays, sum of row sizes)
+        n_bytes = (vals.size * vals.itemsize) if isinstance(vals, np.ndarray) else (sum(i.size * i.itemsize) for i in vals)
+        n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we&#39;ll also be compressing the rows when writing
+        n_rows_per_transaction = max(1, len(vals) // n_batches)
+        ix: int = 0
+        while ix &lt; len(vals):
+                batch = {self.name: vals[ix: ix + n_rows_per_transaction]}
+                shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
+                ix += n_rows_per_transaction</code></pre>
+</details>
+</dd>
 <dt id="shoji.tensor.Tensor.numpy_dtype"><code class="name flex">
 <span>def <span class="ident">numpy_dtype</span></span>(<span>self) -> str</span>
 </code></dt>
@@ -469,7 +882,17 @@ class Tensor:
 <nav id="sidebar">
 <h1>Index</h1>
 <div class="toc">
-<ul></ul>
+<ul>
+<li><a href="#overview">Overview</a><ul>
+<li><a href="#rank">Rank</a></li>
+<li><a href="#datatype">Datatype</a></li>
+<li><a href="#dimensions">Dimensions</a></li>
+<li><a href="#shape">Shape</a></li>
+</ul>
+</li>
+<li><a href="#key-concept-rows">Key concept: rows</a></li>
+<li><a href="#jagged-tensors">Jagged tensors</a></li>
+</ul>
 </div>
 <ul id="index">
 <li><h3>Super-module</h3>
@@ -482,6 +905,7 @@ class Tensor:
 <li>
 <h4><code><a title="shoji.tensor.Tensor" href="#shoji.tensor.Tensor">Tensor</a></code></h4>
 <ul class="">
+<li><code><a title="shoji.tensor.Tensor.append" href="#shoji.tensor.Tensor.append">append</a></code></li>
 <li><code><a title="shoji.tensor.Tensor.numpy_dtype" href="#shoji.tensor.Tensor.numpy_dtype">numpy_dtype</a></code></li>
 <li><code><a title="shoji.tensor.Tensor.python_dtype" href="#shoji.tensor.Tensor.python_dtype">python_dtype</a></code></li>
 <li><code><a title="shoji.tensor.Tensor.valid_types" href="#shoji.tensor.Tensor.valid_types">valid_types</a></code></li>
