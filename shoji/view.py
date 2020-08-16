@@ -5,7 +5,7 @@ are automatically written to the corresponding subset of the database.
 
 Views are *selections of elements* along one or more dimensions. 
 
-View are created by filter expressions (see `shoji.filters`) on workspaces or dimensions. Once you 
+View are created by filter expressions (see `shoji.filter`) on workspaces or dimensions. Once you 
 have obtained a view, you can read from it just like you would from the workspace itself:
 
 ```python
@@ -55,12 +55,6 @@ class View:
 		# Get the tensor
 		tensor = self.wsm[name]
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
-		# if tensor.rank == 0:
-		# 	codec = shoji.Codec(tensor.dtype)
-		# 	# Read the value directly, since you can't filter a scalar
-		# 	key = self.wsm._subspace.pack(("tensor_values", name, 0, 0))
-		# 	val = self.wsm._db.transaction[key]
-		# 	return codec.decode(val)
 
 		indices = None
 		if tensor.rank > 0 and tensor.dims[0] in self.filters:
@@ -88,9 +82,9 @@ class View:
 			if dim in self.filters:
 				indices.append(np.sort(self.filters[tensor.dims[0]].get_rows(self.wsm)))
 			else:
-				indices.append(slice(None))
-		tensor.inits = vals
-		shoji.io.write_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
+				indices.append(slice(None))  # TODO: this looks weird, maybe a bug?
+		tv = shoji.TensorValue(vals)
+		shoji.io.write_tensor_values(self.wsm._db.transaction, self.wsm, name, tv, indices)
 
 	def __setitem__(self, name: str, vals: np.ndarray) -> None:
 		return self.__setattr__(name, vals)

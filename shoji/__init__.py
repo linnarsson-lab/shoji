@@ -130,30 +130,49 @@ view.Expression.shape
 ```
 
 
-### Learn more
+## Learn more
 
-`shoji.workspace`:    Workspaces let you organise collections of data that belong together.
+..image:: assets/bitmap/overview@2x.png
 
-`shoji.tensor`:  Tensors are N-dimensional arrays of numbers, booleans and strings.
+### Workspaces (`shoji.workspace`)
+ 
+Workspaces let you organise collections of data that belong together. Tensors and dimensions
+are created in workspaces, and tensors and dimensions that live in different workspaces
+are unrelated to each other.
 
-`shoji.dimension`:    Named dimensions that constrain tensors.
+### Tensors (`shoji.tensor`)
 
-`shoji.filter`:  Expressions used to select tensor rows.
+Tensors are N-dimensional arrays of numbers, booleans or strings. All data in shoji is
+stored as tensors.
 
-`shoji.view`:  Creating views of the database through a set of filter expressions.
+### Dimensions (`shoji.dimension`)
 
-`shoji.transaction`:    Read and write data using atomic operations.
+Dimensions define the relationship between tensors, and impose constraints that ensure
+your database is consistent.
+
+### Filters (`shoji.filter`)
+
+Filters are expressions used to select tensor rows. Filters create views, and views
+are the only way to read and write data in shoji.
+
+### Views (`shoji.view`)
+
+Views are windows into the database, created by applying filters. Views
+are the only way to read and write data in shoji.
+
+### Transactions (`shoji.transaction`)
+
+Perform complex database operations atomically.
 
 """
 import fdb
 fdb.api_version(620)
 
-from .codec import Codec
 from .dimension import Dimension
-from .tensor import Tensor
+from .tensor import Tensor, TensorValue
 from .workspace import Workspace, WorkspaceManager
 from .connect import connect
 from .filter import Filter, CompoundFilter, TensorFilter, ConstFilter, DimensionBoolFilter, DimensionIndicesFilter, DimensionSliceFilter, TensorBoolFilter, TensorIndicesFilter, TensorSliceFilter
 from .transaction import Transaction
 from .view import View
-from .io import __nil__
+from .io import __nil__  # This is just to get the io module in the shoji namespace

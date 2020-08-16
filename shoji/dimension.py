@@ -45,9 +45,10 @@ complete all the rows successfully), and will never leave the database in an inc
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
 wrap the `append()` in a `shoji.transaction.Transaction`.
 """
-from typing import Optional, Dict
+from typing import Optional, Dict, Union, List
 import numpy as np
 import shoji
+import fdb
 
 
 class Dimension:
@@ -85,7 +86,7 @@ class Dimension:
 		else:
 			return f"<Dimension of shape {self.shape}>"
 
-	def append(self, vals: Dict[str, np.ndarray]) -> None:
+	def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -> None:
 		"""
 		Append values to all tensors that have this as their first dimension
 
@@ -100,33 +101,35 @@ class Dimension:
 		"""
 		assert self.wsm is not None, "Cannot append to unsaved dimension"
 		assert self.shape is None, "Cannot append to fixed-size dimension"
+
 		# Check that all the values have same length
 		n_rows = -1
-		for values in vals.values():
+		for name, values in vals.items():
+			assert isinstance(values, np.ndarray), f"Input values must be numpy ndarrays, but '{name}' was {type(values)}"
+			assert values.ndim >= 1, f"Input values must be at least 1-dimensional, but '{name}' was scalar"
 			if n_rows == -1:
 				n_rows = len(values)
 			elif len(values) != n_rows:
-				raise ValueError(f"Length (along first dimension) of tensors must be the same when appending")
+				raise ValueError(f"Length (along first dimension) of tensors must be the same when appending, but '{name}' was length {len(values)} while other arrays were {n_rows} long")
 
-		# Total size of the transaction (for jagged arrays, sum of row sizes; for strings sum of string lengths)
 		n_bytes = 0
 		for name, val in vals.items():
-			if isinstance(val, np.ndarray):
-				if np.issubdtype(val.dtype,  np.object_):
-					n_bytes += sum([len(s) for s in val]) * 2
-				else:
-					n_bytes += val.size * val.itemsize
-			else:
-				for row in val:
-					if np.issubdtype(val.dtype,  np.object_):
-						n_bytes += sum([len(s) for s in row]) * 2
-					else:
-						n_bytes += row.size * row.itemsize
-		print(n_bytes)
-		n_rows_per_transaction = int(max(1, n_rows / (n_bytes / 5_000_000))) # Should be plenty, given that we'll also be compressing the rows when writing
+			tv = shoji.TensorValue(val)
+			n_bytes += tv.size_in_bytes()
+
+		n_bytes_per_transaction = 1_000_000  # Starting point, but we'll adapt it below
 		ix: int = 0
 		while ix < n_rows:
+			n_rows_per_transaction = int(max(1, n_rows / (n_bytes / n_bytes_per_transaction)))
 			batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-			print(batch)
-			shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
+			try:
+				n_bytes_written = shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
+			except fdb.impl.FDBError as e:
+				if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
+					n_bytes_per_transaction = max(1, n_bytes_per_transaction // 2)
+					continue
+				else:
+					raise e
+			if n_bytes_written < n_bytes_per_transaction // 2:  # Not enough bytes, so increase for next round
+				n_bytes_per_transaction *= 2
 			ix += n_rows_per_transaction

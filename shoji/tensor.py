@@ -181,6 +181,76 @@ import numpy as np
 import shoji
 
 
+class TensorValue:
+	def __init__(self, values: Union[Tuple[np.ndarray], List[np.ndarray], np.ndarray]) -> None:
+		self.values = values
+
+		if isinstance(values, (list, tuple)):
+			self.jagged = True
+			self.rank = values[0].ndim + 1
+			self.dtype = values[0].dtype.name
+			if self.dtype == "object":
+				self.dtype = "string"
+
+			shape: List[int] = list(values[0].shape)
+			for i, array in enumerate(values):
+				if not isinstance(array, np.ndarray):
+					raise ValueError("Rows of jagged tensor must be numpy ndarrays")
+				if self.rank != array.ndim + 1:
+					raise ValueError("Rows of jagged tensor cannot be mixed rank")
+				if self.dtype != array.dtype:
+					raise ValueError("Rows of jagged tensor cannot be mixed dtype")
+				if self.dtype == "string":
+					if not all([isinstance(x, str) for x in array.flat]):
+						raise TypeError("string tensors (numpy dtype='object') must contain only string elements")
+				if array.ndim != len(shape):
+					raise ValueError(f"Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shape} at row 0")
+				for ix in range(len(shape)):
+					if shape[ix] != array.shape[ix]:
+						shape[ix] = 0
+			self.shape = tuple([len(values)] + shape)			
+		else:
+			self.jagged = False
+			self.rank = values.ndim
+			self.dtype = values.dtype.name
+			if self.dtype == "object":
+				self.dtype = "string"
+				if not all([isinstance(x, str) for x in values.flat]):
+					raise TypeError("string tensors (numpy dtype='object') must contain only string elements")
+			self.shape = values.shape
+
+		if self.dtype not in Tensor.valid_types:
+			raise TypeError(f"Invalid dtype '{self.dtype}' for tensor value")
+
+
+	@property
+	def size(self) -> int:
+		return np.prod(self.shape)
+
+	def __len__(self) -> int:
+		if self.rank > 0:
+			return self.shape[0]
+		return 1
+	
+	def __iter__(self):
+		for row in self.values:
+			yield row
+
+	def size_in_bytes(self) -> int:
+		n_bytes = 0
+		if not self.jagged:
+			if self.dtype == "string":
+				n_bytes += sum([len(s) for s in self.values]) * 2
+			else:
+				n_bytes += self.values.size * self.values.itemsize  # type: ignore
+		else:
+			for row in self.values:
+				if self.dtype == "string":
+					n_bytes += sum([len(s) for s in row]) * 2
+				else:
+					n_bytes += row.size * row.itemsize
+		return n_bytes
+
 class Tensor:
 	valid_types = ("bool", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "string")
 
@@ -210,35 +280,24 @@ class Tensor:
 		self.name = ""  # Will be set if the Tensor is read from the db
 		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
-		self.inits = inits
-		if self.inits is None:
+		if inits is None:
+			self.inits: TensorValue = None
 			self.jagged = False
 			self.shape = shape if shape is not None else (0,) * len(dims)
 		else:
 			# If scalar, convert to an ndarray scalar which will have shape ()
-			if np.isscalar(self.inits):
-				self.inits = np.array(self.inits, dtype=self.numpy_dtype())
-			# If not jagged, then it's a regular ndarray
-			if isinstance(self.inits, np.ndarray):
-				self.shape = self.inits.shape
-				self.jagged = False
-				self._check_type(self.inits)
-			else: # It's jagged: a list of ndarrays, possibly of different shapes
-				assert isinstance(self.inits, list)
-				self.jagged = True
-				shp: List[int] = list(self.inits[0].shape)
-				for i, array in enumerate(self.inits):
-					assert isinstance(array, np.ndarray), "All rows of jagged array must be numpy ndarrays"
-					self._check_type(array)
-					if len(array.shape) != len(shp):
-						raise ValueError(f"Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shp} at row 0")
-					for ix in range(len(shp)):
-						if shp[ix] != array.shape[ix]:
-							shp[ix] = 0
-				self.shape = tuple([len(self.inits)] + shp)
+			if np.isscalar(inits):
+				self.inits = TensorValue(np.array(inits, dtype=self.numpy_dtype()))
+			else:
+				self.inits = TensorValue(inits)
+			self.jagged = self.inits.jagged
+			self.shape = self.inits.shape
 
 			if len(self.dims) != len(self.shape):
 				raise ValueError(f"Rank mismatch: shape {self.dims} declared is not the same rank as shape {self.shape} of values")
+
+			if self.dtype != self.inits.dtype:
+				raise TypeError(f"Tensor dtype '{self.dtype}' does not match dtype of inits '{self.inits.dtype}'")
 
 		for ix, dim in enumerate(self.dims):
 			if dim is not None and not isinstance(dim, int) and not isinstance(dim, str):
@@ -247,6 +306,7 @@ class Tensor:
 			if isinstance(dim, int) and self.inits is not None:
 				if self.shape[ix] != dim:  # type: ignore
 					raise IndexError(f"Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values")
+
 		self.rank = len(self.dims)
 
 	def __len__(self) -> int:
@@ -332,9 +392,9 @@ class Tensor:
 	def __le__(self, other) -> "shoji.Filter":  # type: ignore
 		return self._compare("<=", other)
 
-	def append(self, vals: np.ndarray) -> None:
+	def append(self, vals: Union[List[np.ndarray], np.ndarray]) -> None:
 		assert self.wsm is not None, "Cannot append to unbound tensor"
-
+		
 		if self.rank == 0:
 			raise ValueError("Cannot append to a scalar")
 		if isinstance(self.dims[0], str):
@@ -342,10 +402,11 @@ class Tensor:
 				d = self.wsm[self.dims[0]]
 				if isinstance(d, shoji.Dimension):
 					d.append(vals)
+					return
 			raise ValueError(f"Failed to append along named first dimension {self.dims[0]}")
 
-		# Total size of the transaction (for jagged arrays, sum of row sizes)
-		n_bytes = (vals.size * vals.itemsize) if isinstance(vals, np.ndarray) else (sum(i.size * i.itemsize) for i in vals)
+		tv = TensorValue(vals)
+		n_bytes = tv.size_in_bytes()
 		n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we'll also be compressing the rows when writing
 		n_rows_per_transaction = max(1, len(vals) // n_batches)
 		ix: int = 0
@@ -354,43 +415,40 @@ class Tensor:
 			shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
 			ix += n_rows_per_transaction
 
-	def _check_type(self, inits) -> None:
-		# Check that the type is exactly right
-		if self.dtype != inits.dtype.name:
-			if self.dtype != "string":
-				raise TypeError("Tensor dtype and inits dtype do not match")
-			if (self.dtype == "string" and inits.dtype.name != "object") or (self.dtype == "string" and inits.dtype.name == "object" and not isinstance(inits.flat[0], str)):
-				raise TypeError("string tensors must be initialized with ndarray dtype 'object', where objects are strings")
-
 	def _quick_look(self) -> str:
 		if self.rank == 0:
-			return self[:]
-		elif self.rank == 1:
-			s = "[" + ", ".join([str(x) for x in self[:5]])
-			if len(self) > 5:
+			if self.dtype == "string":
+				s = f'"{self[:]}"'
+			else:
+				s = str(self[:])
+			if len(s) > 60:
+				return s[:56] + " ..."
+			return s
+
+		def look(vals) -> str:
+			s = "["
+			if not isinstance(vals, list) and vals.ndim == 1:
+				if self.dtype == "string":
+					s += ", ".join([f'"{x}"' for x in vals[:5]])
+				else:
+					s += ", ".join([str(x) for x in vals[:5]])
+			else:
+				elms = []
+				for val in vals[:5]:
+					elms.append(look(val))
+				s += ", ".join(elms)
+			if len(vals) > 5:
 				s += ", ...]"
 			else:
 				s += "]"
 			return s
-		elif self.rank == 2:
-			result = "["
-			elms = []
-			for x in self[:5]:
-				s = "["
-				s += ", ".join([str(x) for x in x[:5]])
-				if len(x) > 5:
-					s += ", ...]"
-				else:
-					s += "]"
-				elms.append(s)
-			result += ", ".join(elms)
-			if len(self) > 5:
-				result += ", ...]"
-			else:
-				result += "]"
-			return result
-		else:
-			return f"(rank={self.rank})"
+
+		s = look(self[:10])
+		if len(s) > 60:
+			return s[:56] + " ···"
+		return s
+
+
 
 	def __repr__(self) -> str:
-		return f"<Tensor dtype='{self.dtype}' dims={self.dims}, shape={self.shape}>"
+		return f"<Tensor {self.name} dtype='{self.dtype}' dims={self.dims}, shape={self.shape}>"

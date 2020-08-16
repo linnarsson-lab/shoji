@@ -79,10 +79,12 @@ del db.scRNA
 """
 from typing import Any, Tuple, Union, List
 import fdb
+import numpy as np
 import logging
 from tqdm import trange
 import loompy
 import shoji
+import timeit
 
 
 class Workspace:
@@ -97,45 +99,45 @@ class WorkspaceManager:
 	"""
 	Class for managing workspaces. You should not create WorkspaceManager objects yourself.
 	"""
-	def __init__(self, db: fdb.impl.Database, subspace: fdb.directory_impl.DirectorySubspace, path: Union[Tuple, Tuple[str, ...]]) -> None:
+	def __init__(self, db: fdb.impl.Database, subdir: fdb.directory_impl.DirectorySubspace, path: Union[Tuple, Tuple[str, ...]]) -> None:
 		self._db = db
-		self._subspace = subspace
+		self._subdir = subdir
 		self._path = path
 		self._name: str = ""
 
 	def _move_to(self, new_path: Union[str, Tuple[str]]) -> None:
 		if not isinstance(new_path, tuple):
 			new_path = (new_path,)
-		self._subspace = self._subspace._move_to(self._db.transaction, ("shoji",) + new_path)
+		self._subdir = self._subdir._move_to(self._db.transaction, ("shoji",) + new_path)
 		self._path = new_path
 		
 	def _create(self, path: Union[str, Tuple[str]]) -> "WorkspaceManager":
 		if not isinstance(path, tuple):
 			path = (path,)
-		subspace = self._subspace.create(self._db.transaction, path)
-		return WorkspaceManager(self._db.transaction, subspace, self._path + path)
+		subdir = self._subdir.create(self._db.transaction, path)
+		return WorkspaceManager(self._db.transaction, subdir, self._path + path)
 
 	def _workspaces(self) -> List[str]:
-		return self._subspace.list(self._db.transaction)
+		return self._subdir.list(self._db.transaction)
 
 	def _dimensions(self) -> List[str]:
-		return [self._subspace["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["dimensions"].range()]]
+		return [self._subdir["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["dimensions"].range()]]
 
 	def _tensors(self) -> List[str]:
-		return [self._subspace["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["tensors"].range()]]
+		return [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
 
 	def __dir__(self) -> List[str]:
-		dimensions = [self._subspace["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["dimensions"].range()]]
-		tensors = [self._subspace["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["tensors"].range()]]
-		return self._subspace.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
+		dimensions = [self._subdir["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["dimensions"].range()]]
+		tensors = [self._subdir["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["tensors"].range()]]
+		return self._subdir.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
 	def __iter__(self):
-		for s in self._subspace.list(self._db.transaction):
+		for s in self._subdir.list(self._db.transaction):
 			yield self[s]
-		dimensions = [self._subspace["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["dimensions"].range()]]
+		dimensions = [self._subdir["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["dimensions"].range()]]
 		for d in dimensions:
 			yield self[d]
-		tensors = [self._subspace["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subspace["tensors"].range()]]
+		tensors = [self._subdir["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["tensors"].range()]]
 		for t in tensors:
 			yield self[t]
 
@@ -191,16 +193,16 @@ class WorkspaceManager:
 			#  * After one or more rows have been fully written (consistent with other tensors in the dimension)
 			#  * After all rows have been fully written
 			# In each case, the database state will be consistent
-			shoji.io.create_or_update_tensor(self._db.transaction, self, name, tensor)
-			if tensor.inits is not None:
-				dim = None
-				if tensor.rank > 0 and isinstance(tensor.dims[0], str):
-					dim = shoji.io.get_dimension(self._db.transaction, self, tensor.dims[0])
-					if dim is not None:
-						# This ensures that all dimension constraints are properly checked
-						shoji.io.append_tensors(self._db.transaction, self, tensor.dims[0], {name: tensor.inits})
-						return
-				shoji.io.write_tensor_values(self._db.transaction, self, name, tensor)
+			shoji.io.create_tensor(self._db.transaction, self, name, tensor)
+			# if tensor.inits is not None:
+			# 	dim = None
+			# 	if tensor.rank > 0 and isinstance(tensor.dims[0], str):
+			# 		dim = shoji.io.get_dimension(self._db.transaction, self, tensor.dims[0])
+			# 		if dim is not None:
+			# 			# This ensures that all dimension constraints are properly checked
+			# 			shoji.io.append_tensors(self._db.transaction, self, tensor.dims[0], {name: tensor.inits.values})
+			# 			return
+			# 	shoji.io.write_tensor_values(self._db.transaction, self, name, tensor.inits)
 		else:
 			super().__setattr__(name, value)
 	
@@ -213,20 +215,37 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
-	def from_loom(self, f: str, layers: List[str] = None) -> None:
+	def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False) -> None:
 		with loompy.connect(f, validate=False) as ds:
 			if layers is None:
 				layers = list(ds.layers.keys())
 			self.genes = shoji.Dimension(shape=None)
 			self.cells = shoji.Dimension(shape=None)
 
-			logging.info("Loading row attributes")
+			if verbose:
+				logging.info("Loading global attributes")
+
+			for key, val in ds.attrs.items():
+				if not isinstance(val, np.ndarray):
+					val = np.array(val)
+				dtype = val.dtype.name
+				if dtype.startswith("str"):
+					dtype = "string"
+					val = val.astype("object")
+				name = key[0].upper() + key[1:]
+				while name in ds.ca or name in ds.ra:
+					name += "_gobal"
+				self[name] = shoji.Tensor("string" if dtype == "object" else dtype, (), val)
+
+			if verbose:
+				logging.info("Loading row attributes")
 			d = {}
 			for key, vals in ds.ra.items():
 				dtype = vals.dtype.name
 				name = key[0].upper() + key[1:]
 				d[name] = ds.ra[key]
-				dims = ("genes", ) + (None,) * (vals.ndim - 1)
+				# dims = ("genes", ) + (None,) * (vals.ndim - 1)
+				dims = ("genes", ) + vals.shape[1:]
 				self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
 			self.genes.append(d)
 
@@ -236,15 +255,22 @@ class WorkspaceManager:
 			for key, vals in ds.ca.items():
 				dtype = ds.ca[key].dtype.name
 				name = key[0].upper() + key[1:]
-				dims = ("cells", ) + (None,) * (vals.ndim - 1)
+				# dims = ("cells", ) + (None,) * (vals.ndim - 1)
+				dims = ("cells", ) + vals.shape[1:]
 				if name in skipped:
-					logging.warning(f"Column attribute '{name}' skipped because a row attribute already exists with that name.")
+					if verbose:
+						logging.warning(f"Column attribute '{name}' skipped because a row attribute already exists with that name.")
+					skipped.append(name)
+				if not name[0].isupper():
+					if verbose:
+						logging.warning(f"Column attribute '{name}' skipped because attribute name is invalid (must start with a letter).")
 					skipped.append(name)
 				else:
 					self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
 
-			logging.info("Loading column attributes and matrix layers")
-			STEP = 200
+			if verbose:
+				logging.info("Loading column attributes and matrix layers")
+			STEP = 2000
 			for i in trange(0, ds.shape[1], STEP):
 				d = {}
 				for key in ds.ca.keys():
@@ -266,11 +292,11 @@ class WorkspaceManager:
 				self.cells.append(d)
 			
 	def __repr__(self) -> str:
-		subspaces = self._subspace.list(self._db.transaction)
-		dimensions = [self._subspace["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["dimensions"].range()]]
-		tensors = [self._subspace["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subspace["tensors"].range()]]
-		s = f"Workspace with {len(subspaces)} subspaces, {len(dimensions)} dimensions and {len(tensors)} tensors:"
-		for sub in subspaces:
+		subdirs = self._workspaces()
+		dimensions = [self._subdir["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["dimensions"].range()]]
+		tensors = [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
+		s = f"Workspace with {len(subdirs)} workspaces, {len(dimensions)} dimensions and {len(tensors)} tensors:"
+		for sub in subdirs:
 			s += f"\n  {sub} <Workspace>" 
 		for dname in dimensions:
 			s += f"\n  {dname} {self[dname]}"
@@ -284,17 +310,17 @@ class WorkspaceManager:
 		else:
 			s = f"<h4>{self._name} (shoji.Workspace)</h4>"
 		
-		subspaces = self._workspaces()
-		if len(subspaces) > 0:
+		subdirs = self._workspaces()
+		if len(subdirs) > 0:
 			s += f"<h5>Sub-workspaces</h5>"
 			s += "<table><tr><th></th><th>Contents</th></tr>"
-			for wsname in subspaces:
+			for wsname in subdirs:
 				ws = self[wsname]
 				s += "<tr>"
-				n_subspaces = len(ws._workspaces())
+				n_subdirs = len(ws._workspaces())
 				n_dimensions = len(ws._dimensions())
 				n_tensors = len(ws._tensors())
-				s += f"<td align='left'><strong>{ws._name}</strong></td><td>{n_subspaces} workspaces, {n_dimensions} dimensions, {n_tensors} tensors</td>"
+				s += f"<td align='left'><strong>{ws._name}</strong></td><td>{n_subdirs} workspaces, {n_dimensions} dimensions, {n_tensors} tensors</td>"
 				s += "</tr>"
 			s += "</table>"
 	
@@ -322,11 +348,19 @@ class WorkspaceManager:
 				s += f"<td align='left'>{t.dtype}</td>"
 				s += f"<td align='left'>{t.rank}</td>"
 				if t.rank > 0:
-					s += "<td>" + " ✕ ".join([str(s) for s in t.dims]) + "</td>"
-					s += "<td>" + " ✕ ".join(['{:,}'.format(s) for s in t.shape]) + "</td>"
+					s += "<td>" + " ✕ ".join([(str(s) if s is not None else "__") for s in t.dims]) + "</td>"
+					shps = []
+					for i, shp in enumerate(t.shape):
+						if t.dims[i] is None:
+							shps.append("__")
+						elif isinstance(t.dims[i], str) and self[t.dims[i]].shape is None:
+							shps.append("__")
+						else:
+							shps.append("{:,}".format(shp))
+					s += "<td>" + " ✕ ".join(shps) + "</td>"
 				else:
 					s += "<td>()</td>"
-					s += "<td>(scalar)</td>"
+					s += "<td>()</td>"
 				s += f"<td>{t._quick_look()}</td>"
 				s += "</tr>"
 			s += "</table>"
