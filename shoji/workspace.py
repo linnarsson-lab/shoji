@@ -108,7 +108,7 @@ class WorkspaceManager:
 	def _move_to(self, new_path: Union[str, Tuple[str]]) -> None:
 		if not isinstance(new_path, tuple):
 			new_path = (new_path,)
-		self._subdir = self._subdir._move_to(self._db.transaction, ("shoji",) + new_path)
+		self._subdir = self._subdir.move_to(self._db.transaction, ("shoji",) + new_path)
 		self._path = new_path
 		
 	def _create(self, path: Union[str, Tuple[str]]) -> "WorkspaceManager":

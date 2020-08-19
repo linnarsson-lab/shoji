@@ -10,9 +10,9 @@ View.orderby(tensor, take=10)
 .aspandas(), .asxarray() etc.
 GUI
 Cookbook: how to model different kinds of data (table, relational db, sparse matrix, graph)
-
+Maybe: enforce consistent jaggedness if a jagged dimension is named (and if performance allows)
 BUG: Tensor.shape should not be an exact value for dims that are jagged
-
+BUG: Dimension.shape is not updated when it is the 2nd or higher dimension of some tensors
 
 Minimize number of roundtrips per operation to reduce latency
 Make sure jagged & scalar tensors work as intended
