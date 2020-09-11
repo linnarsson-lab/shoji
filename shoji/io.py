@@ -7,7 +7,7 @@ import fdb
 import numpy as np
 import blosc
 import shoji
-import numba
+#import numba
 import pickle
 import copy
 
@@ -305,7 +305,7 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 			tr[key] = encoded[j:j + CHUNK_SIZE]
 	return n_bytes_written
 
-@numba.jit
+#@numba.jit
 def compute_ranges(elements):
     elements = np.sort(elements)
     ranges = []

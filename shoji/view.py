@@ -58,7 +58,7 @@ class View:
 
 		indices = None
 		if tensor.rank > 0 and tensor.dims[0] in self.filters:
-			indices = np.sort(self.filters[tensor.dims[0]].get_rows(self.wsm))
+			indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
 		# Read the tensor (all or selected rows)
 		result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
 		# Filter the remaining dimensions
@@ -80,7 +80,7 @@ class View:
 		indices = []
 		for dim in tensor.dims:
 			if dim in self.filters:
-				indices.append(np.sort(self.filters[tensor.dims[0]].get_rows(self.wsm)))
+				indices.append(self.filters[tensor.dims[0]].get_rows(self.wsm))
 			else:
 				indices.append(slice(None))  # TODO: this looks weird, maybe a bug?
 		tv = shoji.TensorValue(vals)

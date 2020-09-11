@@ -86,6 +86,9 @@ class Dimension:
 		else:
 			return f"<Dimension of shape {self.shape}>"
 
+	def __len__(self) -> int:
+		return self.length
+
 	def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -> None:
 		"""
 		Append values to all tensors that have this as their first dimension
