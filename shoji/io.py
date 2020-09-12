@@ -355,6 +355,8 @@ def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, na
 			ranges = [(0, 0)]
 	else:
 		n_rows = len(indices)
+		if n_rows == 0:
+			return np.zeros(0, dtype=tensor.numpy_dtype())
 		ranges = compute_ranges(indices)
 
 	if tensor.rank == 0:  # It's a scalar value
@@ -376,7 +378,7 @@ def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, na
 		result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
 		ix = 0
 		for (start, stop) in ranges:
-			vals = read_chunked_rows(tr, subdir, name, start, stop)
+			vals = read_chunked_rows(tr, subdir, name, int(start), int(stop))
 			result[ix: ix + len(vals)] = vals
 		return result
 	else:  # A dense array (not jagged or scalar) with more than one row per chunk

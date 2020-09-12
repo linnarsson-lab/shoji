@@ -77,12 +77,16 @@ class View:
 	def __setattr__(self, name: str, vals: np.ndarray) -> None:
 		tensor: shoji.Tensor = self.wsm[name]
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
-		indices = []
-		for dim in tensor.dims:
+
+		for i, dim in enumerate(tensor.dims):
+			if i == 0:
+				continue
 			if dim in self.filters:
-				indices.append(self.filters[tensor.dims[0]].get_rows(self.wsm))
-			else:
-				indices.append(slice(None))  # TODO: this looks weird, maybe a bug?
+				raise IndexError("Cannot write to view filtered non non-first tensor dimension")
+		if tensor.dims[0] in self.filters:
+			indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
+		else:
+			indices = np.arange(tensor.shape[0])
 		tv = shoji.TensorValue(vals)
 		shoji.io.write_tensor_values(self.wsm._db.transaction, self.wsm, name, tv, indices)
 

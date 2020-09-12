@@ -114,6 +114,8 @@ class WorkspaceManager:
 	def _create(self, path: Union[str, Tuple[str]]) -> "WorkspaceManager":
 		if not isinstance(path, tuple):
 			path = (path,)
+		if self._subdir.exists(self._db.transaction, path):
+			raise IOError(f"Workspace '{'/'.join(path)}' already exists")
 		subdir = self._subdir.create(self._db.transaction, path)
 		return WorkspaceManager(self._db.transaction, subdir, self._path + path)
 
