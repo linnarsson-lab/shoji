@@ -77,13 +77,16 @@ class View:
 	def __setattr__(self, name: str, vals: np.ndarray) -> None:
 		tensor: shoji.Tensor = self.wsm[name]
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
+		assert isinstance(vals, (np.ndarray, list, tuple)), f"Value assigned to '{name}' is not a numpy array or a list or tuple of numpy arrays"
 
 		for i, dim in enumerate(tensor.dims):
 			if i == 0:
 				continue
 			if dim in self.filters:
 				raise IndexError("Cannot write to view filtered non non-first tensor dimension")
-		if tensor.dims[0] in self.filters:
+		if tensor.rank == 0:
+			indices = np.array([0], dtype="int32")
+		elif tensor.dims[0] in self.filters:
 			indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
 		else:
 			indices = np.arange(tensor.shape[0])
