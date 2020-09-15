@@ -128,6 +128,11 @@ class WorkspaceManager:
 	def _tensors(self) -> List[str]:
 		return [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
 
+	def _get_tensor(self, name: str) -> shoji.Tensor:
+		tensor = self[name]
+		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a tensor"
+		return tensor
+
 	def __dir__(self) -> List[str]:
 		dimensions = [self._subdir["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["dimensions"].range()]]
 		tensors = [self._subdir["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["tensors"].range()]]

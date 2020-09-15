@@ -41,9 +41,10 @@ view = ws.scRNA[ws.Age > 10, ws.Chromosome == "chr1"]
 
 
 """
-from typing import Tuple
+from typing import Tuple, Callable, Union
 import shoji
 import numpy as np
+import xarray as xr
 
 
 class View:
@@ -51,6 +52,27 @@ class View:
 		super().__setattr__("filters", {f.dim: f for f in filters})
 		super().__setattr__("wsm", wsm)
 	
+	def xarray(self, *, tensors: Tuple[str, ...] = None) -> xr:
+		"""
+		Return the whole view as an in-memory `xarray.Dataset` object with named dimensions
+
+		Args:
+			tensors:	The tensors to include in the xarray, or None to include all
+		
+		Remarks:
+			All tensors in the view are loaded into the xarray Dataset, with the exception
+			of jagged tensors, which are not supported by xarray.
+		"""
+		variables = {}
+		for t in self.wsm._tensors():
+			if tensors is not None and t not in tensors:
+				continue
+			tensor = self.wsm._get_tensor(t)
+			if tensor.jagged:
+				continue
+			variables[t] = (tensor.dims, self[t])
+		return xr.Dataset(variables)
+
 	def __getattr__(self, name: str) -> np.ndarray:
 		# Get the tensor
 		tensor = self.wsm[name]
@@ -71,8 +93,13 @@ class View:
 				result = result.take(indices, axis=i)
 		return result
 
-	def __getitem__(self, name: str) -> np.ndarray:
-		return self.__getattr__(name)
+	def __getitem__(self, expr: Union[str, slice]) -> np.ndarray:
+		# Is it a slice? Return a slice of the view
+		if isinstance(expr, slice):
+			# OOPS no we have to look up the dimension if it exists already!
+			raise NotImplementedError()
+			return View(self.wsm, self.filters + [shoji.DimensionSliceFilter(self.dim, expr)])
+		return self.__getattr__(expr)
 
 	def __setattr__(self, name: str, vals: np.ndarray) -> None:
 		tensor: shoji.Tensor = self.wsm[name]

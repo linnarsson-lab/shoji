@@ -190,12 +190,14 @@ class WorkspaceManager:
         def _move_to(self, new_path: Union[str, Tuple[str]]) -&gt; None:
                 if not isinstance(new_path, tuple):
                         new_path = (new_path,)
-                self._subdir = self._subdir._move_to(self._db.transaction, (&#34;shoji&#34;,) + new_path)
+                self._subdir = self._subdir.move_to(self._db.transaction, (&#34;shoji&#34;,) + new_path)
                 self._path = new_path
                 
         def _create(self, path: Union[str, Tuple[str]]) -&gt; &#34;WorkspaceManager&#34;:
                 if not isinstance(path, tuple):
                         path = (path,)
+                if self._subdir.exists(self._db.transaction, path):
+                        raise IOError(f&#34;Workspace &#39;{&#39;/&#39;.join(path)}&#39; already exists&#34;)
                 subdir = self._subdir.create(self._db.transaction, path)
                 return WorkspaceManager(self._db.transaction, subdir, self._path + path)
 
@@ -207,6 +209,11 @@ class WorkspaceManager:
 
         def _tensors(self) -&gt; List[str]:
                 return [self._subdir[&#34;tensors&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+
+        def _get_tensor(self, name: str) -&gt; shoji.Tensor:
+                tensor = self[name]
+                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a tensor&#34;
+                return tensor
 
         def __dir__(self) -&gt; List[str]:
                 dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
@@ -297,12 +304,24 @@ class WorkspaceManager:
         def __delitem__(self, name: str) -&gt; None:
                 shoji.io.delete_entity(self._db.transaction, self, name)
 
-        def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False) -&gt; None:
+        def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None) -&gt; None:
+                def fix_name(name, suffix, other_names):
+                        if name in other_names:
+                                name += &#34;_&#34; + suffix
+                        name = name[0].upper() + name[1:]
+                        if not name[0].isupper():
+                                name = &#34;X_&#34; + name
+                        return name
+
+                if dimension_names is None:
+                        dimension_names = (&#34;genes&#34;, &#34;cells&#34;)
+                genes_dim = dimension_names[0]
+                cells_dim = dimension_names[1]
                 with loompy.connect(f, validate=False) as ds:
                         if layers is None:
                                 layers = list(ds.layers.keys())
-                        self.genes = shoji.Dimension(shape=None)
-                        self.cells = shoji.Dimension(shape=None)
+                        self[genes_dim] = shoji.Dimension(shape=None)
+                        self[cells_dim] = shoji.Dimension(shape=None)
 
                         if verbose:
                                 logging.info(&#34;Loading global attributes&#34;)
@@ -314,41 +333,26 @@ class WorkspaceManager:
                                 if dtype.startswith(&#34;str&#34;):
                                         dtype = &#34;string&#34;
                                         val = val.astype(&#34;object&#34;)
-                                name = key[0].upper() + key[1:]
-                                while name in ds.ca or name in ds.ra:
-                                        name += &#34;_gobal&#34;
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (), val)
+                                name = fix_name(key, &#34;global&#34;, ds.ca.keys() + ds.ra.keys() + ds.layers.keys())
+                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, val.shape, val)
 
                         if verbose:
                                 logging.info(&#34;Loading row attributes&#34;)
                         d = {}
                         for key, vals in ds.ra.items():
                                 dtype = vals.dtype.name
-                                name = key[0].upper() + key[1:]
+                                name = fix_name(key, genes_dim, ds.ca.keys() + ds.layers.keys() + ds.attrs.keys())
                                 d[name] = ds.ra[key]
-                                # dims = (&#34;genes&#34;, ) + (None,) * (vals.ndim - 1)
-                                dims = (&#34;genes&#34;, ) + vals.shape[1:]
+                                dims = (genes_dim, ) + vals.shape[1:]
                                 self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
-                        self.genes.append(d)
-
-                        self.genes = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
+                        self[genes_dim].append(d)
+                        self[genes_dim] = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
                         
-                        skipped = [x for x in ds.ca.keys() if x in ds.ra.keys()]
                         for key, vals in ds.ca.items():
                                 dtype = ds.ca[key].dtype.name
-                                name = key[0].upper() + key[1:]
-                                # dims = (&#34;cells&#34;, ) + (None,) * (vals.ndim - 1)
-                                dims = (&#34;cells&#34;, ) + vals.shape[1:]
-                                if name in skipped:
-                                        if verbose:
-                                                logging.warning(f&#34;Column attribute &#39;{name}&#39; skipped because a row attribute already exists with that name.&#34;)
-                                        skipped.append(name)
-                                if not name[0].isupper():
-                                        if verbose:
-                                                logging.warning(f&#34;Column attribute &#39;{name}&#39; skipped because attribute name is invalid (must start with a letter).&#34;)
-                                        skipped.append(name)
-                                else:
-                                        self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
+                                name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+                                dims = (cells_dim, ) + vals.shape[1:]
+                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
 
                         if verbose:
                                 logging.info(&#34;Loading column attributes and matrix layers&#34;)
@@ -356,22 +360,16 @@ class WorkspaceManager:
                         for i in trange(0, ds.shape[1], STEP):
                                 d = {}
                                 for key in ds.ca.keys():
-                                        name = key[0].upper() + key[1:]
-                                        if name in skipped:
-                                                continue
+                                        name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
                                         d[name] = ds.ca[key][i:i + STEP]
                                 for key in layers:
-                                        if key not in ds.layers:
-                                                raise KeyError(f&#34;Layer &#39;{key}&#39; not found&#34;)
-                                        if key == &#34;&#34;:
-                                                name = &#34;Expression&#34;
-                                        else:
-                                                name = key[0].upper() + key[1:]
+                                        name = &#34;Expression&#34; if key == &#34;&#34; else key
+                                        name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
                                         dtype = ds.layers[key].dtype.name
                                         if i == 0:
-                                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (&#34;cells&#34;, &#34;genes&#34;))
+                                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (cells_dim, genes_dim))
                                         d[name] = ds.layers[key][:, i:i + STEP].T
-                                self.cells.append(d)
+                                self[cells_dim].append(d)
                         
         def __repr__(self) -&gt; str:
                 subdirs = self._workspaces()
@@ -498,12 +496,14 @@ class WorkspaceManager:
         def _move_to(self, new_path: Union[str, Tuple[str]]) -&gt; None:
                 if not isinstance(new_path, tuple):
                         new_path = (new_path,)
-                self._subdir = self._subdir._move_to(self._db.transaction, (&#34;shoji&#34;,) + new_path)
+                self._subdir = self._subdir.move_to(self._db.transaction, (&#34;shoji&#34;,) + new_path)
                 self._path = new_path
                 
         def _create(self, path: Union[str, Tuple[str]]) -&gt; &#34;WorkspaceManager&#34;:
                 if not isinstance(path, tuple):
                         path = (path,)
+                if self._subdir.exists(self._db.transaction, path):
+                        raise IOError(f&#34;Workspace &#39;{&#39;/&#39;.join(path)}&#39; already exists&#34;)
                 subdir = self._subdir.create(self._db.transaction, path)
                 return WorkspaceManager(self._db.transaction, subdir, self._path + path)
 
@@ -515,6 +515,11 @@ class WorkspaceManager:
 
         def _tensors(self) -&gt; List[str]:
                 return [self._subdir[&#34;tensors&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+
+        def _get_tensor(self, name: str) -&gt; shoji.Tensor:
+                tensor = self[name]
+                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a tensor&#34;
+                return tensor
 
         def __dir__(self) -&gt; List[str]:
                 dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
@@ -605,12 +610,24 @@ class WorkspaceManager:
         def __delitem__(self, name: str) -&gt; None:
                 shoji.io.delete_entity(self._db.transaction, self, name)
 
-        def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False) -&gt; None:
+        def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None) -&gt; None:
+                def fix_name(name, suffix, other_names):
+                        if name in other_names:
+                                name += &#34;_&#34; + suffix
+                        name = name[0].upper() + name[1:]
+                        if not name[0].isupper():
+                                name = &#34;X_&#34; + name
+                        return name
+
+                if dimension_names is None:
+                        dimension_names = (&#34;genes&#34;, &#34;cells&#34;)
+                genes_dim = dimension_names[0]
+                cells_dim = dimension_names[1]
                 with loompy.connect(f, validate=False) as ds:
                         if layers is None:
                                 layers = list(ds.layers.keys())
-                        self.genes = shoji.Dimension(shape=None)
-                        self.cells = shoji.Dimension(shape=None)
+                        self[genes_dim] = shoji.Dimension(shape=None)
+                        self[cells_dim] = shoji.Dimension(shape=None)
 
                         if verbose:
                                 logging.info(&#34;Loading global attributes&#34;)
@@ -622,41 +639,26 @@ class WorkspaceManager:
                                 if dtype.startswith(&#34;str&#34;):
                                         dtype = &#34;string&#34;
                                         val = val.astype(&#34;object&#34;)
-                                name = key[0].upper() + key[1:]
-                                while name in ds.ca or name in ds.ra:
-                                        name += &#34;_gobal&#34;
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (), val)
+                                name = fix_name(key, &#34;global&#34;, ds.ca.keys() + ds.ra.keys() + ds.layers.keys())
+                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, val.shape, val)
 
                         if verbose:
                                 logging.info(&#34;Loading row attributes&#34;)
                         d = {}
                         for key, vals in ds.ra.items():
                                 dtype = vals.dtype.name
-                                name = key[0].upper() + key[1:]
+                                name = fix_name(key, genes_dim, ds.ca.keys() + ds.layers.keys() + ds.attrs.keys())
                                 d[name] = ds.ra[key]
-                                # dims = (&#34;genes&#34;, ) + (None,) * (vals.ndim - 1)
-                                dims = (&#34;genes&#34;, ) + vals.shape[1:]
+                                dims = (genes_dim, ) + vals.shape[1:]
                                 self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
-                        self.genes.append(d)
-
-                        self.genes = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
+                        self[genes_dim].append(d)
+                        self[genes_dim] = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
                         
-                        skipped = [x for x in ds.ca.keys() if x in ds.ra.keys()]
                         for key, vals in ds.ca.items():
                                 dtype = ds.ca[key].dtype.name
-                                name = key[0].upper() + key[1:]
-                                # dims = (&#34;cells&#34;, ) + (None,) * (vals.ndim - 1)
-                                dims = (&#34;cells&#34;, ) + vals.shape[1:]
-                                if name in skipped:
-                                        if verbose:
-                                                logging.warning(f&#34;Column attribute &#39;{name}&#39; skipped because a row attribute already exists with that name.&#34;)
-                                        skipped.append(name)
-                                if not name[0].isupper():
-                                        if verbose:
-                                                logging.warning(f&#34;Column attribute &#39;{name}&#39; skipped because attribute name is invalid (must start with a letter).&#34;)
-                                        skipped.append(name)
-                                else:
-                                        self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
+                                name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+                                dims = (cells_dim, ) + vals.shape[1:]
+                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
 
                         if verbose:
                                 logging.info(&#34;Loading column attributes and matrix layers&#34;)
@@ -664,22 +666,16 @@ class WorkspaceManager:
                         for i in trange(0, ds.shape[1], STEP):
                                 d = {}
                                 for key in ds.ca.keys():
-                                        name = key[0].upper() + key[1:]
-                                        if name in skipped:
-                                                continue
+                                        name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
                                         d[name] = ds.ca[key][i:i + STEP]
                                 for key in layers:
-                                        if key not in ds.layers:
-                                                raise KeyError(f&#34;Layer &#39;{key}&#39; not found&#34;)
-                                        if key == &#34;&#34;:
-                                                name = &#34;Expression&#34;
-                                        else:
-                                                name = key[0].upper() + key[1:]
+                                        name = &#34;Expression&#34; if key == &#34;&#34; else key
+                                        name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
                                         dtype = ds.layers[key].dtype.name
                                         if i == 0:
-                                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (&#34;cells&#34;, &#34;genes&#34;))
+                                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (cells_dim, genes_dim))
                                         d[name] = ds.layers[key][:, i:i + STEP].T
-                                self.cells.append(d)
+                                self[cells_dim].append(d)
                         
         def __repr__(self) -&gt; str:
                 subdirs = self._workspaces()

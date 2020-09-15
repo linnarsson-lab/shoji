@@ -388,8 +388,6 @@ def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, na
 		# Use parallelism with futures
 		r = {}
 		unique_chunks = np.unique(chunks)
-		if name == "Length":
-			print(unique_chunks)
 		for chunk in unique_chunks:
 			key = subdir.pack(("tensor_values", name, int(chunk), 0))
 			r[chunk] = tr[key]  # This returns a Future
