@@ -371,7 +371,7 @@ def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, na
 	if tensor.jagged:
 		resultj: List[np.ndarray] = []
 		for (start, stop) in ranges:
-			resultj += read_chunked_rows(tr, subdir, name, start, stop)
+			resultj += read_chunked_rows(tr, subdir, name, int(start), int(stop))
 		return resultj
 	rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
 	if rows_per_chunk == 1:
