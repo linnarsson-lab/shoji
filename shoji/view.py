@@ -73,6 +73,37 @@ class View:
 			variables[t] = (tensor.dims, self[t])
 		return xr.Dataset(variables)
 
+	def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -> shoji.GroupViewBy:
+		return shoji.GroupViewBy(self, labels, projection)
+
+	def get_length(self, dim: str) -> int:
+		if dim in self.filters:
+			return len(self.filters[dim].get_rows(self.wsm))
+		else:
+			return self.wsm._get_dimension(dim).length
+
+	def _read_chunk(self, name: str, start: int, end: int) -> np.ndarray:
+		# Get the tensor
+		tensor = self.wsm[name]
+		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
+
+		if tensor.rank > 0 and tensor.dims[0] in self.filters:
+			indices = self.filters[tensor.dims[0]].get_rows(self.wsm)[start: end]
+		else:
+			indices = np.arange(start, end)
+
+		# Read the tensor (selected rows)
+		result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
+		# Filter the remaining dimensions
+		for i, dim in enumerate(tensor.dims):
+			if i == 0:
+				continue
+			if isinstance(dim, str) and dim in self.filters:
+				# Filter this dimension
+				indices = self.filters[dim].get_rows(self.wsm)
+				result = result.take(indices, axis=i)
+		return result
+
 	def __getattr__(self, name: str) -> np.ndarray:
 		# Get the tensor
 		tensor = self.wsm[name]
@@ -96,9 +127,14 @@ class View:
 	def __getitem__(self, expr: Union[str, slice]) -> np.ndarray:
 		# Is it a slice? Return a slice of the view
 		if isinstance(expr, slice):
-			# OOPS no we have to look up the dimension if it exists already!
-			raise NotImplementedError()
-			return View(self.wsm, self.filters + [shoji.DimensionSliceFilter(self.dim, expr)])
+			if expr.start is None and expr.stop is None:
+				return self
+			elif len(self.filters) == 1:
+				dim = next(self.filters.keys())
+				return View(self.wsm, self.filters + (shoji.DimensionSliceFilter(dim, expr),))
+			else:
+				print(len(self.filters), self.filters)
+				raise KeyError("Cannot slice a view unless it's filtered on exactly one dimension")
 		return self.__getattr__(expr)
 
 	def __setattr__(self, name: str, vals: np.ndarray) -> None:

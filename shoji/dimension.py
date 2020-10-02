@@ -45,7 +45,7 @@ complete all the rows successfully), and will never leave the database in an inc
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
 wrap the `append()` in a `shoji.transaction.Transaction`.
 """
-from typing import Optional, Dict, Union, List
+from typing import Optional, Dict, Union, List, Callable
 import numpy as np
 import shoji
 import fdb
@@ -88,6 +88,9 @@ class Dimension:
 
 	def __len__(self) -> int:
 		return self.length
+
+	def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -> "shoji.GroupDimensionBy":
+		return shoji.GroupDimensionBy(self, labels, projection)
 
 	def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -> None:
 		"""

@@ -1,41 +1,206 @@
-# from typing import Dict, Union, Callable, Any, List
-# import numpy as np
-# import shoji
+from typing import Dict, Union, Callable, Tuple, Optional
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+import shoji
 
 
-# class GroupBy:
-# 	def __init__(self, view: "shoji.View", tensor_name: str, projection: Callable = None) -> None:
-# 		self.view = view
-# 		self.groupby_name = tensor_name
-# 		tensor = view.wsm._get_tensor(tensor_name)
-# 		if tensor.rank != 1:
-# 			raise ValueError(f"Cannot groupby() tensor '{tensor_name}' of rank {tensor.rank}; a rank-1 tensor is required")
+# Based on https://github.com/mahmoud/lithoxyl/blob/master/lithoxyl/moment.py
+# but adapted to use numpy arrays (element-wise) instead of single values
+# and to support labeled groups of array-values
+class Accumulator:
+	def __init__(self):
+		self._count = 0
+		self._min = None
+		self._max = None
+		self._mean = None
+		self._m2 = None
+		self._m3 = None
+		self._m4 = None
+
+	def add(self, x):
+		if self._count == 0:
+			self._count = 1
+			self._min = x
+			self._max = x
+			self._mean = x
+			self._m2 = np.zeros_like(self._mean)
+			self._m3 = np.zeros_like(self._mean)
+			self._m4 = np.zeros_like(self._mean)
+		else:
+			self._min = np.minimum(self._min, x)
+			self._max = np.maximum(self._min, x)
+			self._count += 1
+			n = self._count
+			delta = x - self._mean
+			delta_n = delta / n
+			delta_n2 = delta_n ** 2
+			self._mean += delta_n
+			term = delta * delta_n * (n - 1)
+			self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
+			self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
+			self._m2 = self._m2 + term
+
+	@property
+	def count(self):
+		return self._count
+
+	@property
+	def mean(self):
+		return self._mean
+
+	@property
+	def variance(self):
+		return self._m2 / (self._count - 1)
+
+	@property
+	def skewness(self):
+		return ((self._count ** 0.5) * self._m3) / (self._m2 ** 1.5)
+
+	@property
+	def kurtosis(self):
+		# TODO: subtract 3? (for normal curve = 0)
+		return (self._count * self._m4) / (self._m2 ** 2)
+
+	@property
+	def sd(self):
+		return self.variance ** 0.5
 
 
-# 	def mapreduce(self, f_map: Callable, f_reduce: Callable, tensor_name: str) -> np.ndarray:
-# 		groupby_tensor = self.view.wsm._get_tensor(self.groupby_name)
-# 		applyto_tensor = self.view.wsm._get_tensor(tensor_name)
-# 		indices = self.view.get
-# 		i = 0
+class GroupAccumulator:
+	def __init__(self) -> None:
+		self.groups: Dict[int, Accumulator] = {}
 
-# 		vals = self.view[self.groupby_name]
-# 		self.groups: Dict[Any, List] = {}  # Dict of projected values to row indices
-# 		self.length = len(vals)
-# 		for i in range(vals.shape[0]):
-# 			if projection is not None:
-# 				self.groups.setdefault(projection(vals[i]), []).append(i)
-# 			else:
-# 				self.groups.setdefault(vals[i], []).append(i)
+	def add(self, label, x) -> None:
+		self.groups.setdefault(label, Accumulator()).add(x)
 
-# 		vals = self.view[tensor_name]
-# 		if len(vals) != self.length:
-# 			raise ValueError("Tensors are not the same length in groupby() operation")
-# 		result = np.empty(len(self.groups), dtype=vals.dtype)
-# 		for i, k in enumerate(self.groups.keys()):
-# 			result[i] = np.mean(vals[self.groups[k]])
-# 		return result
+	def count(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.count for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].count
 
-# 	def map_reduce(self, tensor_name: str, n_rows_per_batch: int = 100):
-# 		i = 0
-# 		while True:
-# 			vals = self.view[tensor]
+	def mean(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.mean for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].mean
+
+	def variance(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.variance for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].variance
+
+	def skewness(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.skewness for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].skewness
+
+	def kurtosis(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.kurtosis for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].kurtosis
+
+	def sd(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.sd for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].sd
+
+
+class GroupViewBy:
+	def __init__(self, view: "shoji.View", labels: Union[str, np.ndarray], projection: Callable = None, chunk_size: int = 1000) -> None:
+		self.view = view
+		self.labels = labels
+		if isinstance(self.labels, str):
+			tensor = view.wsm._get_tensor(self.labels)
+			if tensor.rank != 1:
+				raise ValueError(f"Cannot groupby('{self.labels}'); a rank-1 tensor is required")
+		self.chunk_size = chunk_size
+		self.projection = projection
+
+	def stats(self, of_tensor: str) -> np.ndarray:
+		le = LabelEncoder()
+		if isinstance(self.labels, np.ndarray):
+			label_values = self.labels
+		else:
+			label_values = self.view[self.labels]
+		if self.projection is not None:
+			label_values = [self.projection(x) for x in  label_values]
+		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+		tensor = self.view.wsm._get_tensor(of_tensor)
+		acc = GroupAccumulator()
+		for ix in range(0, self.view.get_length(tensor.dims[0]), self.chunk_size):
+			chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
+			chunk_labels = labels[ix: ix + self.chunk_size]
+			for i, label in enumerate(chunk_labels):
+				acc.add(le.classes_[label], chunk[i])
+		return acc
+
+	def count(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).count()
+
+	def mean(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).mean()
+
+	def variance(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).variance()
+
+	def skewness(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).skewness()
+
+	def kurtosis(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).kurtosis()
+
+	def sd(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).sd()
+
+
+class GroupDimensionBy:
+	def __init__(self, dim: "shoji.Dimension", labels: Union[str, np.ndarray], projection: Callable = None, chunk_size: int = 1000) -> None:
+		self.dim = dim
+		self.labels = labels
+		if isinstance(self.labels, str):
+			tensor = dim.wsm._get_tensor(self.labels)
+			if tensor.rank != 1:
+				raise ValueError(f"Cannot groupby('{self.labels}'); a rank-1 tensor is required")
+		self.chunk_size = chunk_size
+		self.projection = projection
+
+	def stats(self, of_tensor: str) -> np.ndarray:
+		assert self.dim.wsm is not None
+		le = LabelEncoder()
+		if isinstance(self.labels, np.ndarray):
+			label_values = self.labels
+		else:
+			label_values = self.dim.wsm[self.labels][:]
+		if self.projection is not None:
+			label_values = [self.projection(x) for x in  label_values]
+		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+		acc = GroupAccumulator()
+		for ix in range(0, self.dim.length, self.chunk_size):
+			chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
+			chunk_labels = labels[ix: ix + self.chunk_size]
+			for i, label in enumerate(chunk_labels):
+				acc.add(le.classes_[label], chunk[i])
+		return acc
+
+	def count(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).count()
+
+	def mean(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).mean()
+
+	def variance(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).variance()
+
+	def skewness(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).skewness()
+
+	def kurtosis(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).kurtosis()
+
+	def sd(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).sd()

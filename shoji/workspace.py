@@ -125,6 +125,11 @@ class WorkspaceManager:
 	def _dimensions(self) -> List[str]:
 		return [self._subdir["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["dimensions"].range()]]
 
+	def _get_dimension(self, name: str) -> shoji.Tensor:
+		dim = self[name]
+		assert isinstance(dim, shoji.Dimension), f"'{name}' is not a dimension"
+		return dim
+
 	def _tensors(self) -> List[str]:
 		return [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
 
