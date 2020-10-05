@@ -187,6 +187,8 @@ class WorkspaceManager:
 
 	def __setattr__(self, name: str, value: Any) -> None:
 		if isinstance(value, Workspace):
+			if name in self:
+				raise AttributeError(f"Cannot overwrite existing entity with new workspace {name}")
 			self._create(name)
 		elif isinstance(value, shoji.Dimension):
 			# Check that the first letter is lowercase
@@ -205,6 +207,11 @@ class WorkspaceManager:
 			#  * After one or more rows have been fully written (consistent with other tensors in the dimension)
 			#  * After all rows have been fully written
 			# In each case, the database state will be consistent
+			if name in self:
+				if isinstance(self[name], shoji.Tensor):
+					del self[name]
+				else:
+					raise AttributeError(f"Cannot create new tensor '{name}' because it would overwrite existing entity")
 			shoji.io.create_tensor(self._db.transaction, self, name, tensor)
 			# if tensor.inits is not None:
 			# 	dim = None

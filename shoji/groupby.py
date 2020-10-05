@@ -111,7 +111,7 @@ class GroupAccumulator:
 
 
 class GroupViewBy:
-	def __init__(self, view: "shoji.View", labels: Union[str, np.ndarray], projection: Callable = None, chunk_size: int = 1000) -> None:
+	def __init__(self, view: "shoji.View", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
 		self.view = view
 		self.labels = labels
 		if isinstance(self.labels, str):
@@ -120,19 +120,25 @@ class GroupViewBy:
 				raise ValueError(f"Cannot groupby('{self.labels}'); a rank-1 tensor is required")
 		self.chunk_size = chunk_size
 		self.projection = projection
+		self.acc: Optional[GroupAccumulator] = None
 
 	def stats(self, of_tensor: str) -> np.ndarray:
-		le = LabelEncoder()
-		if isinstance(self.labels, np.ndarray):
+		if self.acc is not None:
+			return self.acc
+		tensor = self.view.wsm._get_tensor(of_tensor)
+		n_rows = self.view.get_length(tensor.dims[0])
+		if self.labels is None:
+			label_values = np.zeros(n_rows)
+		elif isinstance(self.labels, np.ndarray):
 			label_values = self.labels
 		else:
 			label_values = self.view[self.labels]
 		if self.projection is not None:
 			label_values = [self.projection(x) for x in  label_values]
+		le = LabelEncoder()
 		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
-		tensor = self.view.wsm._get_tensor(of_tensor)
 		acc = GroupAccumulator()
-		for ix in range(0, self.view.get_length(tensor.dims[0]), self.chunk_size):
+		for ix in range(0, n_rows, self.chunk_size):
 			chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
 			chunk_labels = labels[ix: ix + self.chunk_size]
 			for i, label in enumerate(chunk_labels):
@@ -159,8 +165,9 @@ class GroupViewBy:
 
 
 class GroupDimensionBy:
-	def __init__(self, dim: "shoji.Dimension", labels: Union[str, np.ndarray], projection: Callable = None, chunk_size: int = 1000) -> None:
+	def __init__(self, dim: "shoji.Dimension", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
 		self.dim = dim
+		assert dim.wsm is not None, "Cannot group by unbound dimension"
 		self.labels = labels
 		if isinstance(self.labels, str):
 			tensor = dim.wsm._get_tensor(self.labels)
@@ -168,11 +175,16 @@ class GroupDimensionBy:
 				raise ValueError(f"Cannot groupby('{self.labels}'); a rank-1 tensor is required")
 		self.chunk_size = chunk_size
 		self.projection = projection
+		self.acc: Optional[GroupAccumulator] = None
 
 	def stats(self, of_tensor: str) -> np.ndarray:
+		if self.acc is not None:
+			return self.acc
 		assert self.dim.wsm is not None
 		le = LabelEncoder()
-		if isinstance(self.labels, np.ndarray):
+		if self.labels is None:
+			label_values = np.zeros(self.dim.length)
+		elif isinstance(self.labels, np.ndarray):
 			label_values = self.labels
 		else:
 			label_values = self.dim.wsm[self.labels][:]

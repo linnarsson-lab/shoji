@@ -324,7 +324,7 @@ class Tensor:
 			if expr.start is None and expr.stop is None:
 				return shoji.View(self.wsm, ())[self.name]
 			return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
-		if isinstance(expr, (list, tuple, int)):
+		if isinstance(expr, (list, tuple, int, np.int64, np.int32)):
 			expr = np.array(expr)
 		if isinstance(expr, np.ndarray):
 			if np.issubdtype(expr.dtype, np.bool_):
