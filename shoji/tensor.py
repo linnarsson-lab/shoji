@@ -338,19 +338,24 @@ class Tensor:
 		# Maybe it's a Filter?
 		if isinstance(expr, shoji.Filter):
 			shoji.View(self.wsm, (expr,))[self.name] = vals
+			return
 		# Or a slice?
 		if isinstance(expr, slice):
 			if expr.start is None and expr.stop is None:
 				shoji.View(self.wsm, ())[self.name] = vals
+				return
 			shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name] = vals
-		if isinstance(expr, (list, tuple, int)):
+			return
+		if isinstance(expr, (list, tuple, int, np.integer)):
 			expr = np.array(expr)
 		if isinstance(expr, np.ndarray):
 			if np.issubdtype(expr.dtype, np.bool_):
 				shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name] = vals
 			elif np.issubdtype(expr.dtype, np.int_):
 				shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name] = vals
-		raise KeyError(expr)
+			return
+		else:
+			raise KeyError(expr)
 
 	def numpy_dtype(self) -> str:
 		if self.dtype == "string":
