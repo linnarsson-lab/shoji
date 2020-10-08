@@ -369,8 +369,16 @@ class Tensor:
 	def _compare(self, operator, other) -> "shoji.Filter":
 		if isinstance(other, Tensor):
 			return shoji.TensorFilter(operator, self, other)
-		elif isinstance(other, str) or isinstance(other, int) or isinstance(other, float) or isinstance(other, bool):
+		elif isinstance(other, (str, int, float, bool)):
 			return shoji.ConstFilter(operator, self, other)
+		elif isinstance(other, np.integer):
+			return shoji.ConstFilter(operator, self, int(other))
+		elif isinstance(other, np.float):
+			return shoji.ConstFilter(operator, self, float(other))
+		elif isinstance(other, np.object):
+			return shoji.ConstFilter(operator, self, str(other))
+		elif isinstance(other, np.bool):
+			return shoji.ConstFilter(operator, self, bool(other))
 		else:
 			raise TypeError("Invalid operands for expression")
 
