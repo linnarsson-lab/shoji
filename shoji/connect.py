@@ -34,5 +34,6 @@ def connect(cluster_file=None, event_model=None) -> shoji.WorkspaceManager:
 	"""
 	db = fdb.open(cluster_file=cluster_file, event_model=event_model)
 	db.transaction = db  # default to using the Database object for transactions
+	db.options.set_transaction_retry_limit(1)  # Retry every transaction only once if it doesn't go through
 	subdir = fdb.directory.create_or_open(db, ("shoji",))
 	return shoji.WorkspaceManager(db, subdir, ())

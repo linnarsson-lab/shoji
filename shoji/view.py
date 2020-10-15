@@ -45,6 +45,7 @@ from typing import Tuple, Callable, Union
 import shoji
 import numpy as np
 import xarray as xr
+import logging
 
 
 class View:
@@ -133,7 +134,6 @@ class View:
 				dim = next(self.filters.keys())
 				return View(self.wsm, self.filters + (shoji.DimensionSliceFilter(dim, expr),))
 			else:
-				print(len(self.filters), self.filters)
 				raise KeyError("Cannot slice a view unless it's filtered on exactly one dimension")
 		return self.__getattr__(expr)
 
