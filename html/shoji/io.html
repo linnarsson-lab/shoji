@@ -36,11 +36,8 @@ import fdb
 import numpy as np
 import blosc
 import shoji
-#import numba
 import pickle
 import copy
-
-
 CHUNK_SIZE = 1_000
 
 
@@ -301,8 +298,6 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 
                 if rows_per_chunk &gt; 1:
                         chunks = indices // rows_per_chunk
-                        if name == &#34;Length&#34;:
-                                print(&#34;w&#34;, np.unique(chunks), is_update, indices, tensor.shape, new_length)
                         for chunk in np.unique(chunks):
                                 vals = tv.values[chunks == chunk]
                                 if len(vals) &lt; rows_per_chunk:
@@ -354,7 +349,6 @@ def read_chunked_rows(tr: fdb.impl.Transaction, subdir: fdb.directory_impl.Direc
         result = []
         ix = i
         encoded = bytearray()
-        # TODO: use parallelism with futures instead
         for k, v in tr.get_range(start, stop, streaming_mode=fdb.StreamingMode.want_all):
                 row = subdir.unpack(k)[-2]
                 if row != ix:
@@ -368,66 +362,71 @@ def read_chunked_rows(tr: fdb.impl.Transaction, subdir: fdb.directory_impl.Direc
 
 @fdb.transactional
 def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor = None, indices: np.ndarray = None) -&gt; np.ndarray:
-        subdir = wsm._subdir
-        if tensor is None:
-                tensor = get_tensor(tr, wsm, name)
+        try:
+                subdir = wsm._subdir
+                if tensor is None:
+                        tensor = get_tensor(tr, wsm, name)
 
-        # Convert the list of indices to ranges as far as possible
-        if indices is None:
-                if tensor.rank &gt; 0:
-                        n_rows = tensor.shape[0]
-                        indices = np.arange(0, n_rows)
-                        ranges = [(0, n_rows)]
+                # Convert the list of indices to ranges as far as possible
+                if indices is None:
+                        if tensor.rank &gt; 0:
+                                n_rows = tensor.shape[0]
+                                indices = np.arange(0, n_rows)
+                                ranges = [(0, n_rows)]
+                        else:
+                                n_rows = 1
+                                indices = np.array([0], dtype=&#34;int&#34;)
+                                ranges = [(0, 0)]
                 else:
-                        n_rows = 1
-                        indices = np.array([0], dtype=&#34;int&#34;)
-                        ranges = [(0, 0)]
-        else:
-                n_rows = len(indices)
-                if n_rows == 0:
-                        return np.zeros(0, dtype=tensor.numpy_dtype())
-                ranges = compute_ranges(indices)
+                        n_rows = len(indices)
+                        if n_rows == 0:
+                                return np.zeros(0, dtype=tensor.numpy_dtype())
+                        ranges = compute_ranges(indices)
 
-        if tensor.rank == 0:  # It&#39;s a scalar value
-                key = subdir.pack((&#34;tensor_values&#34;, name) + (0, 0))
-                return blosc.unpack_array(tr[key].value).item()
+                if tensor.rank == 0:  # It&#39;s a scalar value
+                        key = subdir.pack((&#34;tensor_values&#34;, name) + (0, 0))
+                        return blosc.unpack_array(tr[key].value).item()
 
-        if not tensor.jagged and np.prod(tensor.shape) == 0:
-                return np.zeros((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-        if tensor.jagged and tensor.shape[0] == 0:
-                return [np.zeros(tensor.shape[1:], dtype=tensor.numpy_dtype()) for _ in range(n_rows)]
+                if not tensor.jagged and np.prod(tensor.shape) == 0:
+                        return np.zeros((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+                if tensor.jagged and tensor.shape[0] == 0:
+                        return [np.zeros(tensor.shape[1:], dtype=tensor.numpy_dtype()) for _ in range(n_rows)]
 
-        if tensor.jagged:
-                resultj: List[np.ndarray] = []
-                for (start, stop) in ranges:
-                        resultj += read_chunked_rows(tr, subdir, name, start, stop)
-                return resultj
-        rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
-        if rows_per_chunk == 1:
-                result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-                ix = 0
-                for (start, stop) in ranges:
-                        vals = read_chunked_rows(tr, subdir, name, int(start), int(stop))
-                        result[ix: ix + len(vals)] = vals
-                return result
-        else:  # A dense array (not jagged or scalar) with more than one row per chunk
-                chunks = indices // rows_per_chunk
-                result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-                i = 0
-                # Use parallelism with futures
-                r = {}
-                unique_chunks = np.unique(chunks)
-                for chunk in unique_chunks:
-                        key = subdir.pack((&#34;tensor_values&#34;, name, int(chunk), 0))
-                        r[chunk] = tr[key]  # This returns a Future
-                for chunk in unique_chunks:
-                        vals = blosc.unpack_array(r[chunk].value)  # This blocks reading the Future
-                        ixs = indices[chunks == chunk]
-                        vals = vals[np.mod(ixs, rows_per_chunk)]  # Extract the relevant rows from the chunk
-                        result[i: i + len(vals)] = vals
-                        i += len(vals)
-                return result
-
+                if tensor.jagged:
+                        resultj: List[np.ndarray] = []
+                        for (start, stop) in ranges:
+                                resultj += read_chunked_rows(tr, subdir, name, int(start), int(stop))
+                        return resultj
+                rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
+                if rows_per_chunk == 1:
+                        result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+                        ix = 0
+                        for (start, stop) in ranges:
+                                vals = read_chunked_rows(tr, subdir, name, int(start), int(stop))
+                                result[ix: ix + len(vals)] = vals
+                                ix += len(vals)
+                        return result
+                else:  # A dense array (not jagged or scalar) with more than one row per chunk
+                        chunks = indices // rows_per_chunk
+                        result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+                        i = 0
+                        # Use parallelism with futures
+                        r = {}
+                        unique_chunks = np.unique(chunks)
+                        for chunk in unique_chunks:
+                                key = subdir.pack((&#34;tensor_values&#34;, name, int(chunk), 0))
+                                r[chunk] = tr[key]  # This returns a Future
+                        for chunk in unique_chunks:
+                                vals = blosc.unpack_array(r[chunk].value)  # This blocks reading the Future
+                                ixs = indices[chunks == chunk]
+                                vals = vals[np.mod(ixs, rows_per_chunk)]  # Extract the relevant rows from the chunk
+                                result[i: i + len(vals)] = vals
+                                i += len(vals)
+                        return result
+        except fdb.FDBError as e:
+                if e.code == 1007:
+                        raise IOError(&#34;Transaction took too long; try reading fewer rows at a time&#34;)
+                raise e
 
 @fdb.transactional
 def const_compare(tr, wsm: shoji.WorkspaceManager, name: str, operator: str, const: Tuple[int, str, float]) -&gt; np.ndarray:
@@ -1021,7 +1020,6 @@ def read_chunked_rows(tr: fdb.impl.Transaction, subdir: fdb.directory_impl.Direc
         result = []
         ix = i
         encoded = bytearray()
-        # TODO: use parallelism with futures instead
         for k, v in tr.get_range(start, stop, streaming_mode=fdb.StreamingMode.want_all):
                 row = subdir.unpack(k)[-2]
                 if row != ix:
@@ -1044,65 +1042,71 @@ def read_chunked_rows(tr: fdb.impl.Transaction, subdir: fdb.directory_impl.Direc
 </summary>
 <pre><code class="python">@fdb.transactional
 def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor = None, indices: np.ndarray = None) -&gt; np.ndarray:
-        subdir = wsm._subdir
-        if tensor is None:
-                tensor = get_tensor(tr, wsm, name)
+        try:
+                subdir = wsm._subdir
+                if tensor is None:
+                        tensor = get_tensor(tr, wsm, name)
 
-        # Convert the list of indices to ranges as far as possible
-        if indices is None:
-                if tensor.rank &gt; 0:
-                        n_rows = tensor.shape[0]
-                        indices = np.arange(0, n_rows)
-                        ranges = [(0, n_rows)]
+                # Convert the list of indices to ranges as far as possible
+                if indices is None:
+                        if tensor.rank &gt; 0:
+                                n_rows = tensor.shape[0]
+                                indices = np.arange(0, n_rows)
+                                ranges = [(0, n_rows)]
+                        else:
+                                n_rows = 1
+                                indices = np.array([0], dtype=&#34;int&#34;)
+                                ranges = [(0, 0)]
                 else:
-                        n_rows = 1
-                        indices = np.array([0], dtype=&#34;int&#34;)
-                        ranges = [(0, 0)]
-        else:
-                n_rows = len(indices)
-                if n_rows == 0:
-                        return np.zeros(0, dtype=tensor.numpy_dtype())
-                ranges = compute_ranges(indices)
+                        n_rows = len(indices)
+                        if n_rows == 0:
+                                return np.zeros(0, dtype=tensor.numpy_dtype())
+                        ranges = compute_ranges(indices)
 
-        if tensor.rank == 0:  # It&#39;s a scalar value
-                key = subdir.pack((&#34;tensor_values&#34;, name) + (0, 0))
-                return blosc.unpack_array(tr[key].value).item()
+                if tensor.rank == 0:  # It&#39;s a scalar value
+                        key = subdir.pack((&#34;tensor_values&#34;, name) + (0, 0))
+                        return blosc.unpack_array(tr[key].value).item()
 
-        if not tensor.jagged and np.prod(tensor.shape) == 0:
-                return np.zeros((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-        if tensor.jagged and tensor.shape[0] == 0:
-                return [np.zeros(tensor.shape[1:], dtype=tensor.numpy_dtype()) for _ in range(n_rows)]
+                if not tensor.jagged and np.prod(tensor.shape) == 0:
+                        return np.zeros((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+                if tensor.jagged and tensor.shape[0] == 0:
+                        return [np.zeros(tensor.shape[1:], dtype=tensor.numpy_dtype()) for _ in range(n_rows)]
 
-        if tensor.jagged:
-                resultj: List[np.ndarray] = []
-                for (start, stop) in ranges:
-                        resultj += read_chunked_rows(tr, subdir, name, start, stop)
-                return resultj
-        rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
-        if rows_per_chunk == 1:
-                result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-                ix = 0
-                for (start, stop) in ranges:
-                        vals = read_chunked_rows(tr, subdir, name, int(start), int(stop))
-                        result[ix: ix + len(vals)] = vals
-                return result
-        else:  # A dense array (not jagged or scalar) with more than one row per chunk
-                chunks = indices // rows_per_chunk
-                result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-                i = 0
-                # Use parallelism with futures
-                r = {}
-                unique_chunks = np.unique(chunks)
-                for chunk in unique_chunks:
-                        key = subdir.pack((&#34;tensor_values&#34;, name, int(chunk), 0))
-                        r[chunk] = tr[key]  # This returns a Future
-                for chunk in unique_chunks:
-                        vals = blosc.unpack_array(r[chunk].value)  # This blocks reading the Future
-                        ixs = indices[chunks == chunk]
-                        vals = vals[np.mod(ixs, rows_per_chunk)]  # Extract the relevant rows from the chunk
-                        result[i: i + len(vals)] = vals
-                        i += len(vals)
-                return result</code></pre>
+                if tensor.jagged:
+                        resultj: List[np.ndarray] = []
+                        for (start, stop) in ranges:
+                                resultj += read_chunked_rows(tr, subdir, name, int(start), int(stop))
+                        return resultj
+                rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
+                if rows_per_chunk == 1:
+                        result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+                        ix = 0
+                        for (start, stop) in ranges:
+                                vals = read_chunked_rows(tr, subdir, name, int(start), int(stop))
+                                result[ix: ix + len(vals)] = vals
+                                ix += len(vals)
+                        return result
+                else:  # A dense array (not jagged or scalar) with more than one row per chunk
+                        chunks = indices // rows_per_chunk
+                        result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+                        i = 0
+                        # Use parallelism with futures
+                        r = {}
+                        unique_chunks = np.unique(chunks)
+                        for chunk in unique_chunks:
+                                key = subdir.pack((&#34;tensor_values&#34;, name, int(chunk), 0))
+                                r[chunk] = tr[key]  # This returns a Future
+                        for chunk in unique_chunks:
+                                vals = blosc.unpack_array(r[chunk].value)  # This blocks reading the Future
+                                ixs = indices[chunks == chunk]
+                                vals = vals[np.mod(ixs, rows_per_chunk)]  # Extract the relevant rows from the chunk
+                                result[i: i + len(vals)] = vals
+                                i += len(vals)
+                        return result
+        except fdb.FDBError as e:
+                if e.code == 1007:
+                        raise IOError(&#34;Transaction took too long; try reading fewer rows at a time&#34;)
+                raise e</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.update_tensor"><code class="name flex">
@@ -1203,8 +1207,6 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 
                 if rows_per_chunk &gt; 1:
                         chunks = indices // rows_per_chunk
-                        if name == &#34;Length&#34;:
-                                print(&#34;w&#34;, np.unique(chunks), is_update, indices, tensor.shape, new_length)
                         for chunk in np.unique(chunks):
                                 vals = tv.values[chunks == chunk]
                                 if len(vals) &lt; rows_per_chunk:

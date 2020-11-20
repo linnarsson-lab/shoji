@@ -105,7 +105,7 @@ complete all the rows successfully), and will never leave the database in an inc
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
 wrap the `append()` in a `shoji.transaction.Transaction`.
 &#34;&#34;&#34;
-from typing import Optional, Dict, Union, List
+from typing import Optional, Dict, Union, List, Callable
 import numpy as np
 import shoji
 import fdb
@@ -148,6 +148,9 @@ class Dimension:
 
         def __len__(self) -&gt; int:
                 return self.length
+
+        def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -&gt; &#34;shoji.GroupDimensionBy&#34;:
+                return shoji.GroupDimensionBy(self, labels, projection)
 
         def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -&gt; None:
                 &#34;&#34;&#34;
@@ -254,6 +257,9 @@ class Dimension:
 
         def __len__(self) -&gt; int:
                 return self.length
+
+        def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -&gt; &#34;shoji.GroupDimensionBy&#34;:
+                return shoji.GroupDimensionBy(self, labels, projection)
 
         def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -&gt; None:
                 &#34;&#34;&#34;
@@ -373,6 +379,19 @@ tensors will have the same length along the dimension.</p></div>
                 ix += n_rows_per_transaction</code></pre>
 </details>
 </dd>
+<dt id="shoji.dimension.Dimension.groupby"><code class="name flex">
+<span>def <span class="ident">groupby</span></span>(<span>self, labels: Union[str, numpy.ndarray], projection: Callable = None) ‑> <a title="shoji.groupby.GroupDimensionBy" href="groupby.html#shoji.groupby.GroupDimensionBy">GroupDimensionBy</a></span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -&gt; &#34;shoji.GroupDimensionBy&#34;:
+        return shoji.GroupDimensionBy(self, labels, projection)</code></pre>
+</details>
+</dd>
 </dl>
 </dd>
 </dl>
@@ -398,6 +417,7 @@ tensors will have the same length along the dimension.</p></div>
 <h4><code><a title="shoji.dimension.Dimension" href="#shoji.dimension.Dimension">Dimension</a></code></h4>
 <ul class="">
 <li><code><a title="shoji.dimension.Dimension.append" href="#shoji.dimension.Dimension.append">append</a></code></li>
+<li><code><a title="shoji.dimension.Dimension.groupby" href="#shoji.dimension.Dimension.groupby">groupby</a></code></li>
 </ul>
 </li>
 </ul>

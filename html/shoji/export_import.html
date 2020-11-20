@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.8.4" />
-<title>shoji.connect API documentation</title>
-<meta name="description" content="Connecting to a Shoji database cluster …" />
+<title>shoji.export_import API documentation</title>
+<meta name="description" content="Exporting and importing workspaces" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/styles/github.min.css" crossorigin>
@@ -19,57 +19,59 @@
 <main>
 <article id="content">
 <header>
-<h1 class="title">Module <code>shoji.connect</code></h1>
+<h1 class="title">Module <code>shoji.export_import</code></h1>
 </header>
 <section id="section-intro">
-<p>Connecting to a Shoji database cluster.</p>
-<p>To connect to a shoji database, typically you just need to do this:</p>
-<pre><code class="python">db = shoji.connect()
-</code></pre>
-<p>This returns an object <code>db</code> representing the root <code><a title="shoji.workspace.Workspace" href="workspace.html#shoji.workspace.Workspace">Workspace</a></code>.</p>
+<p>Exporting and importing workspaces</p>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">&#34;&#34;&#34;
-Connecting to a Shoji database cluster.
-
-To connect to a shoji database, typically you just need to do this:
-
-```python
-db = shoji.connect()
-```
-
-This returns an object `db` representing the root `shoji.workspace.Workspace`.
-
+Exporting and importing workspaces
 &#34;&#34;&#34;
-import fdb
 import shoji
+import h5py
+import numpy as np
 
 
-def connect(cluster_file=None, event_model=None) -&gt; shoji.WorkspaceManager:
+def import_(f: str, ws: shoji.WorkspaceManager):
+        ...
+
+def export(ws: shoji.WorkspaceManager, f: str, recursive: bool = False, group_name: str = &#34;/&#34;):
         &#34;&#34;&#34;
-        Connect to a Shoji (i.e. [FoundationDB](https://www.foundationdb.org)) database cluster.
+        Export a Shoji workspace to an HDF5 file
 
         Args:
-                cluster_file: The FoundationDB cluster file to use (or None to use the default)
-                event_model: Additional FoundationDB parameters
+                ws                      The workspace to export
+                f                       The file name (full path)
+                recursive       If true, sub-workspaces will be exported to HDF5 sub-groups
+                group_name      The name of the HDF5 group where the workspace should be stored
 
         Remarks:
-                The cluster file should normally not be explicitly provided as an argument to this function.
-                Instead, it will be located automatically by searching these locations:
-
-                1. The value of the FDB_CLUSTER_FILE environment variable, if it has been set;
-                2. An fdb.cluster file in the current working directory, if one is present;
-                3. The default file at its system-dependent location.
-
-                See https://apple.github.io/foundationdb/administration.html for more information
+                If the file does not exist, it will be created
         &#34;&#34;&#34;
-        db = fdb.open(cluster_file=cluster_file, event_model=event_model)
-        db.transaction = db  # default to using the Database object for transactions
-        db.options.set_transaction_retry_limit(1)  # Retry every transaction only once if it doesn&#39;t go through
-        subdir = fdb.directory.create_or_open(db, (&#34;shoji&#34;,))
-        return shoji.WorkspaceManager(db, subdir, ())</code></pre>
+        h5 = h5py.File(f)
+        group = h5.require_group(group_name)
+
+        for dname in ws._dimensions():
+                dim = ws._get_dimension(dname)
+                group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+        for tname in ws._tensors():
+                tensor = ws._get_tensor(tname)
+                group.attrs[&#34;Tensor$&#34; + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
+                group.create_dataset(
+                        tname,
+                        tensor.shape,
+                        tensor.dtype # TODO: get this right
+                )
+                # Now read/write the dataset
+        if recursive:
+                for wsname in ws._workspaces():
+                        export(ws._get_workspace(wsname), f, True)
+        
+        h5.close()</code></pre>
 </details>
 </section>
 <section>
@@ -79,54 +81,73 @@ def connect(cluster_file=None, event_model=None) -&gt; shoji.WorkspaceManager:
 <section>
 <h2 class="section-title" id="header-functions">Functions</h2>
 <dl>
-<dt id="shoji.connect.connect"><code class="name flex">
-<span>def <span class="ident">connect</span></span>(<span>cluster_file=None, event_model=None) ‑> <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a></span>
+<dt id="shoji.export_import.export"><code class="name flex">
+<span>def <span class="ident">export</span></span>(<span>ws: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, f: str, recursive: bool = False, group_name: str = '/')</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Connect to a Shoji (i.e. <a href="https://www.foundationdb.org">FoundationDB</a>) database cluster.</p>
+<div class="desc"><p>Export a Shoji workspace to an HDF5 file</p>
 <h2 id="args">Args</h2>
-<dl>
-<dt><strong><code>cluster_file</code></strong></dt>
-<dd>The FoundationDB cluster file to use (or None to use the default)</dd>
-<dt><strong><code>event_model</code></strong></dt>
-<dd>Additional FoundationDB parameters</dd>
-</dl>
+<p>ws
+The workspace to export
+f
+The file name (full path)
+recursive
+If true, sub-workspaces will be exported to HDF5 sub-groups
+group_name
+The name of the HDF5 group where the workspace should be stored</p>
 <h2 id="remarks">Remarks</h2>
-<p>The cluster file should normally not be explicitly provided as an argument to this function.
-Instead, it will be located automatically by searching these locations:</p>
-<ol>
-<li>The value of the FDB_CLUSTER_FILE environment variable, if it has been set;</li>
-<li>An fdb.cluster file in the current working directory, if one is present;</li>
-<li>The default file at its system-dependent location.</li>
-</ol>
-<p>See <a href="https://apple.github.io/foundationdb/administration.html">https://apple.github.io/foundationdb/administration.html</a> for more information</p></div>
+<p>If the file does not exist, it will be created</p></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def connect(cluster_file=None, event_model=None) -&gt; shoji.WorkspaceManager:
+<pre><code class="python">def export(ws: shoji.WorkspaceManager, f: str, recursive: bool = False, group_name: str = &#34;/&#34;):
         &#34;&#34;&#34;
-        Connect to a Shoji (i.e. [FoundationDB](https://www.foundationdb.org)) database cluster.
+        Export a Shoji workspace to an HDF5 file
 
         Args:
-                cluster_file: The FoundationDB cluster file to use (or None to use the default)
-                event_model: Additional FoundationDB parameters
+                ws                      The workspace to export
+                f                       The file name (full path)
+                recursive       If true, sub-workspaces will be exported to HDF5 sub-groups
+                group_name      The name of the HDF5 group where the workspace should be stored
 
         Remarks:
-                The cluster file should normally not be explicitly provided as an argument to this function.
-                Instead, it will be located automatically by searching these locations:
-
-                1. The value of the FDB_CLUSTER_FILE environment variable, if it has been set;
-                2. An fdb.cluster file in the current working directory, if one is present;
-                3. The default file at its system-dependent location.
-
-                See https://apple.github.io/foundationdb/administration.html for more information
+                If the file does not exist, it will be created
         &#34;&#34;&#34;
-        db = fdb.open(cluster_file=cluster_file, event_model=event_model)
-        db.transaction = db  # default to using the Database object for transactions
-        db.options.set_transaction_retry_limit(1)  # Retry every transaction only once if it doesn&#39;t go through
-        subdir = fdb.directory.create_or_open(db, (&#34;shoji&#34;,))
-        return shoji.WorkspaceManager(db, subdir, ())</code></pre>
+        h5 = h5py.File(f)
+        group = h5.require_group(group_name)
+
+        for dname in ws._dimensions():
+                dim = ws._get_dimension(dname)
+                group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+        for tname in ws._tensors():
+                tensor = ws._get_tensor(tname)
+                group.attrs[&#34;Tensor$&#34; + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
+                group.create_dataset(
+                        tname,
+                        tensor.shape,
+                        tensor.dtype # TODO: get this right
+                )
+                # Now read/write the dataset
+        if recursive:
+                for wsname in ws._workspaces():
+                        export(ws._get_workspace(wsname), f, True)
+        
+        h5.close()</code></pre>
+</details>
+</dd>
+<dt id="shoji.export_import.import_"><code class="name flex">
+<span>def <span class="ident">import_</span></span>(<span>f: str, ws: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def import_(f: str, ws: shoji.WorkspaceManager):
+        ...</code></pre>
 </details>
 </dd>
 </dl>
@@ -147,7 +168,8 @@ Instead, it will be located automatically by searching these locations:</p>
 </li>
 <li><h3><a href="#header-functions">Functions</a></h3>
 <ul class="">
-<li><code><a title="shoji.connect.connect" href="#shoji.connect.connect">connect</a></code></li>
+<li><code><a title="shoji.export_import.export" href="#shoji.export_import.export">export</a></code></li>
+<li><code><a title="shoji.export_import.import_" href="#shoji.export_import.import_">import_</a></code></li>
 </ul>
 </li>
 </ul>

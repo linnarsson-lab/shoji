@@ -125,6 +125,38 @@ number of rows is added to all tensors with the same first dimension, so that
 they remain consistent with each other. When two or more tensors share the first
 dimension (and it's declared variable-length), then you can only append rows
 simultaneously to all those tensors (using <code><a title="shoji.dimension.Dimension.append" href="dimension.html#shoji.dimension.Dimension.append">Dimension.append()</a></code>). </p>
+<h2 id="reading-from-tensors">Reading from tensors</h2>
+<p>The universal method for reading data in shoji is to create a <code><a title="shoji.view.View" href="view.html#shoji.view.View">View</a></code>
+of the workspace. However, sometimes you just want to read from one tensor
+and don't care about creating a view. Shoji supports indexing tensors similar
+to numpy "fancy indexing" (and similar to how views are created):</p>
+<pre><code class="python">x = ws.Expression[:]  # Read the whole tensor
+y = ws.Expression[10:20]  # Read a slice
+z = ws.Expression[(1, 2, 5, 9)]  # Read specific rows
+w = ws.Expression[(True, False, True)]  # Read rows given by bool mask array
+</code></pre>
+<p>The above expressions are just shorthands for creating the corresponding view
+and immediately reading from the tensor. There is no difference in performance.
+For example, the two expressions below are equivalent:</p>
+<pre><code class="python">x = ws.Expression[:]
+x = ws[:].Expression
+</code></pre>
+<h3 id="reading-a-whole-tensor-non-transactionally">Reading a whole tensor non-transactionally</h3>
+<p>All reads and writes are transactional by default, and must therefore finish in less than
+five seconds. This can be an issue for large tensors, e.g. sometimes trying
+to read a whole big matrix (<code>ws.Expression[:]</code>) fails because it takes longer
+than five seconds. What to do? If you need the transactional consistency guarantees,
+then you will have to read the tensor in chunks (and deal with any errors):</p>
+<pre><code class="python">u = np.zeros((ws.cells.length, ws.genes.length), dtype=&quot;uint16&quot;)
+for ix in range(0, ws.cells.length, 1000):
+        u[ix:ix + 1000] = ws.Unspliced[ix:ix + 1000]
+</code></pre>
+<p>But sometimes you just want to read a whole, large tensor
+and you don't need transactional guarantees. For those use cases, the ellipsis (&hellip;)
+can be used in place of the color (:) to load tensors:</p>
+<pre><code class="python">x = ws.Expression[...]  # Read the tensor non-transactionally
+y = ws.Expression[:]  # Read the tensor transactionally; fails if longer than 5 seconds
+</code></pre>
 <h2 id="jagged-tensors">Jagged tensors</h2>
 <p>If any non-first dimension is declared with variable size, then the tensor is
 <em>jagged</em>. This means that the size along those dimensions can be different for
@@ -296,6 +328,53 @@ dimension (and it&#39;s declared variable-length), then you can only append rows
 simultaneously to all those tensors (using `shoji.dimension.Dimension.append`). 
 
 
+## Reading from tensors
+
+The universal method for reading data in shoji is to create a `shoji.view.View`
+of the workspace. However, sometimes you just want to read from one tensor
+and don&#39;t care about creating a view. Shoji supports indexing tensors similar 
+to numpy &#34;fancy indexing&#34; (and similar to how views are created):
+
+```python
+x = ws.Expression[:]  # Read the whole tensor
+y = ws.Expression[10:20]  # Read a slice
+z = ws.Expression[(1, 2, 5, 9)]  # Read specific rows
+w = ws.Expression[(True, False, True)]  # Read rows given by bool mask array
+```
+
+The above expressions are just shorthands for creating the corresponding view
+and immediately reading from the tensor. There is no difference in performance.
+For example, the two expressions below are equivalent:
+
+```python
+x = ws.Expression[:]
+x = ws[:].Expression
+```
+
+### Reading a whole tensor non-transactionally
+
+All reads and writes are transactional by default, and must therefore finish in less than 
+five seconds. This can be an issue for large tensors, e.g. sometimes trying
+to read a whole big matrix (`ws.Expression[:]`) fails because it takes longer
+than five seconds. What to do? If you need the transactional consistency guarantees,
+then you will have to read the tensor in chunks (and deal with any errors):
+
+```python
+u = np.zeros((ws.cells.length, ws.genes.length), dtype=&#34;uint16&#34;)
+for ix in range(0, ws.cells.length, 1000):
+        u[ix:ix + 1000] = ws.Unspliced[ix:ix + 1000]
+```
+
+But sometimes you just want to read a whole, large tensor
+and you don&#39;t need transactional guarantees. For those use cases, the ellipsis (...)
+can be used in place of the color (:) to load tensors:
+
+```python
+x = ws.Expression[...]  # Read the tensor non-transactionally
+y = ws.Expression[:]  # Read the tensor transactionally; fails if longer than 5 seconds
+```
+
+
 ## Jagged tensors
 
 If any non-first dimension is declared with variable size, then the tensor is 
@@ -333,7 +412,7 @@ limits the total size of the row of a tensor. If all the data for a single row c
 be retrieved in less than five seconds, you will have to redesign the data model (e.g. 
 breaking out some dimensions to a separate tensor).
 &#34;&#34;&#34;
-from typing import Tuple, Union, List, Optional, Callable
+from typing import Tuple, Union, List, Optional, Callable, Any
 import numpy as np
 import shoji
 
@@ -428,6 +507,16 @@ class Tensor:
                         The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
                 &#34;&#34;&#34;
                 self.dtype = dtype
+                self.bytewidth = -1  # string dtype doesn&#39;t have a fixed bytewidth
+                if dtype in (&#34;bool&#34;, &#34;uint8&#34;, &#34;int8&#34;):
+                        self.bytewidth = 1
+                elif dtype in (&#34;uint16&#34;, &#34;int16&#34;, &#34;float16&#34;):
+                        self.bytewidth = 2
+                elif dtype in (&#34;uint32&#34;, &#34;int32&#34;, &#34;float32&#34;):
+                        self.bytewidth = 3
+                elif dtype in (&#34;uint64&#34;, &#34;int64&#34;, &#34;float64&#34;):
+                        self.bytewidth = 4
+                
                 # Check that the type is valid
                 if dtype not in Tensor.valid_types:
                         raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
@@ -471,8 +560,18 @@ class Tensor:
                         return self.shape[0]
                 return 0
 
-        def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int]) -&gt; np.ndarray:
+        def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int, Any]) -&gt; np.ndarray:  # We have to include Any here to support ellipsis, which is untypable in mypy
                 assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
+                # Is it an ellipsis? Read the tensor non-transactionally in batches
+                if expr == ...:
+                        if self.dtype == &#34;string&#34; or self.rank == 0:
+                                return shoji.View(self.wsm, ())[self.name]
+                        x = np.zeros(self.shape, dtype=self.dtype)
+                        BYTES_PER_BATCH = 1_000_000
+                        n_rows_per_batch = max(1, BYTES_PER_BATCH // int(self.bytewidth * np.prod(self.shape) / self.shape[0]))
+                        for ix in range(0, self.shape[0], n_rows_per_batch):
+                                x[ix:ix + n_rows_per_batch] = self.wsm[self.name][ix:ix + n_rows_per_batch]
+                        return x
                 # Maybe it&#39;s a Filter?
                 if isinstance(expr, shoji.Filter):
                         return shoji.View(self.wsm, (expr,))[self.name]
@@ -481,7 +580,7 @@ class Tensor:
                         if expr.start is None and expr.stop is None:
                                 return shoji.View(self.wsm, ())[self.name]
                         return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
-                if isinstance(expr, (list, tuple, int)):
+                if isinstance(expr, (list, tuple, int, np.int64, np.int32)):
                         expr = np.array(expr)
                 if isinstance(expr, np.ndarray):
                         if np.issubdtype(expr.dtype, np.bool_):
@@ -495,19 +594,24 @@ class Tensor:
                 # Maybe it&#39;s a Filter?
                 if isinstance(expr, shoji.Filter):
                         shoji.View(self.wsm, (expr,))[self.name] = vals
+                        return
                 # Or a slice?
                 if isinstance(expr, slice):
                         if expr.start is None and expr.stop is None:
                                 shoji.View(self.wsm, ())[self.name] = vals
+                                return
                         shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name] = vals
-                if isinstance(expr, (list, tuple, int)):
+                        return
+                if isinstance(expr, (list, tuple, int, np.integer)):
                         expr = np.array(expr)
                 if isinstance(expr, np.ndarray):
                         if np.issubdtype(expr.dtype, np.bool_):
                                 shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name] = vals
                         elif np.issubdtype(expr.dtype, np.int_):
                                 shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name] = vals
-                raise KeyError(expr)
+                        return
+                else:
+                        raise KeyError(expr)
 
         def numpy_dtype(self) -&gt; str:
                 if self.dtype == &#34;string&#34;:
@@ -526,8 +630,16 @@ class Tensor:
         def _compare(self, operator, other) -&gt; &#34;shoji.Filter&#34;:
                 if isinstance(other, Tensor):
                         return shoji.TensorFilter(operator, self, other)
-                elif isinstance(other, str) or isinstance(other, int) or isinstance(other, float) or isinstance(other, bool):
+                elif isinstance(other, (str, int, float, bool)):
                         return shoji.ConstFilter(operator, self, other)
+                elif isinstance(other, np.integer):
+                        return shoji.ConstFilter(operator, self, int(other))
+                elif isinstance(other, np.float):
+                        return shoji.ConstFilter(operator, self, float(other))
+                elif isinstance(other, np.object):
+                        return shoji.ConstFilter(operator, self, str(other))
+                elif isinstance(other, np.bool):
+                        return shoji.ConstFilter(operator, self, bool(other))
                 else:
                         raise TypeError(&#34;Invalid operands for expression&#34;)
 
@@ -665,6 +777,16 @@ class Tensor:
                         The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
                 &#34;&#34;&#34;
                 self.dtype = dtype
+                self.bytewidth = -1  # string dtype doesn&#39;t have a fixed bytewidth
+                if dtype in (&#34;bool&#34;, &#34;uint8&#34;, &#34;int8&#34;):
+                        self.bytewidth = 1
+                elif dtype in (&#34;uint16&#34;, &#34;int16&#34;, &#34;float16&#34;):
+                        self.bytewidth = 2
+                elif dtype in (&#34;uint32&#34;, &#34;int32&#34;, &#34;float32&#34;):
+                        self.bytewidth = 3
+                elif dtype in (&#34;uint64&#34;, &#34;int64&#34;, &#34;float64&#34;):
+                        self.bytewidth = 4
+                
                 # Check that the type is valid
                 if dtype not in Tensor.valid_types:
                         raise TypeError(f&#34;Invalid Tensor type {dtype}&#34;)
@@ -708,8 +830,18 @@ class Tensor:
                         return self.shape[0]
                 return 0
 
-        def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int]) -&gt; np.ndarray:
+        def __getitem__(self, expr: Union[&#34;shoji.Filter&#34;, tuple, slice, int, Any]) -&gt; np.ndarray:  # We have to include Any here to support ellipsis, which is untypable in mypy
                 assert self.wsm is not None, &#34;Tensor is not bound to a database&#34;
+                # Is it an ellipsis? Read the tensor non-transactionally in batches
+                if expr == ...:
+                        if self.dtype == &#34;string&#34; or self.rank == 0:
+                                return shoji.View(self.wsm, ())[self.name]
+                        x = np.zeros(self.shape, dtype=self.dtype)
+                        BYTES_PER_BATCH = 1_000_000
+                        n_rows_per_batch = max(1, BYTES_PER_BATCH // int(self.bytewidth * np.prod(self.shape) / self.shape[0]))
+                        for ix in range(0, self.shape[0], n_rows_per_batch):
+                                x[ix:ix + n_rows_per_batch] = self.wsm[self.name][ix:ix + n_rows_per_batch]
+                        return x
                 # Maybe it&#39;s a Filter?
                 if isinstance(expr, shoji.Filter):
                         return shoji.View(self.wsm, (expr,))[self.name]
@@ -718,7 +850,7 @@ class Tensor:
                         if expr.start is None and expr.stop is None:
                                 return shoji.View(self.wsm, ())[self.name]
                         return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
-                if isinstance(expr, (list, tuple, int)):
+                if isinstance(expr, (list, tuple, int, np.int64, np.int32)):
                         expr = np.array(expr)
                 if isinstance(expr, np.ndarray):
                         if np.issubdtype(expr.dtype, np.bool_):
@@ -732,19 +864,24 @@ class Tensor:
                 # Maybe it&#39;s a Filter?
                 if isinstance(expr, shoji.Filter):
                         shoji.View(self.wsm, (expr,))[self.name] = vals
+                        return
                 # Or a slice?
                 if isinstance(expr, slice):
                         if expr.start is None and expr.stop is None:
                                 shoji.View(self.wsm, ())[self.name] = vals
+                                return
                         shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name] = vals
-                if isinstance(expr, (list, tuple, int)):
+                        return
+                if isinstance(expr, (list, tuple, int, np.integer)):
                         expr = np.array(expr)
                 if isinstance(expr, np.ndarray):
                         if np.issubdtype(expr.dtype, np.bool_):
                                 shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name] = vals
                         elif np.issubdtype(expr.dtype, np.int_):
                                 shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name] = vals
-                raise KeyError(expr)
+                        return
+                else:
+                        raise KeyError(expr)
 
         def numpy_dtype(self) -&gt; str:
                 if self.dtype == &#34;string&#34;:
@@ -763,8 +900,16 @@ class Tensor:
         def _compare(self, operator, other) -&gt; &#34;shoji.Filter&#34;:
                 if isinstance(other, Tensor):
                         return shoji.TensorFilter(operator, self, other)
-                elif isinstance(other, str) or isinstance(other, int) or isinstance(other, float) or isinstance(other, bool):
+                elif isinstance(other, (str, int, float, bool)):
                         return shoji.ConstFilter(operator, self, other)
+                elif isinstance(other, np.integer):
+                        return shoji.ConstFilter(operator, self, int(other))
+                elif isinstance(other, np.float):
+                        return shoji.ConstFilter(operator, self, float(other))
+                elif isinstance(other, np.object):
+                        return shoji.ConstFilter(operator, self, str(other))
+                elif isinstance(other, np.bool):
+                        return shoji.ConstFilter(operator, self, bool(other))
                 else:
                         raise TypeError(&#34;Invalid operands for expression&#34;)
 
@@ -1064,6 +1209,10 @@ def size(self) -&gt; int:
 </ul>
 </li>
 <li><a href="#key-concept-rows">Key concept: rows</a></li>
+<li><a href="#reading-from-tensors">Reading from tensors</a><ul>
+<li><a href="#reading-a-whole-tensor-non-transactionally">Reading a whole tensor non-transactionally</a></li>
+</ul>
+</li>
 <li><a href="#jagged-tensors">Jagged tensors</a></li>
 </ul>
 </div>

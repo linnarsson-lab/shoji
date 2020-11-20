@@ -26,35 +26,263 @@
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">from typing import Dict, Union, Callable, Any, List
+<pre><code class="python">from typing import Dict, Union, Callable, Tuple, Optional
 import numpy as np
+from sklearn.preprocessing import LabelEncoder
 import shoji
 
 
-class GroupBy:
-    def __init__(self, view: &#34;shoji.View&#34;, tensor_name: str, projection: Callable = None) -&gt; None:
-        self.view = view
-        vals = view[tensor_name]
-        if vals.ndim != 1:
-            raise ValueError(f&#34;Cannot groupby() tensor &#39;{tensor_name}&#39; of rank {vals.ndim}; a rank-1 tensor is required&#34;)
-        self.groups: Dict[Any, List] = {}  # Dict of projected values to row indices
-        self.length = len(vals)
-        for i in range(vals.shape[0]):
-            if projection is not None:
-                self.groups.setdefault(projection(vals[i]), []).append(i)
-            else:
-                self.groups.setdefault(vals[i], []).append(i)
+# Based on https://github.com/mahmoud/lithoxyl/blob/master/lithoxyl/moment.py
+# but adapted to use numpy arrays (element-wise) instead of single values
+# and to support labeled groups of array-values
+class Accumulator:
+        def __init__(self):
+                self._sum = None
+                self._count = None
+                self._nnz = None
+                self._min = None
+                self._max = None
+                self._mean = None
+                self._m2 = None
+                self._m3 = None
+                self._m4 = None
 
-    def mean(self, tensor_name: str) -&gt; np.ndarray:
-        # TODO: optimize this for very large tensors (avoid reading whole tensor at once)
-        vals = self.view[tensor_name]
-        if len(vals) != self.length:
-            raise ValueError(&#34;Tensors are not the same length in groupby() operation&#34;)
-        result = np.empty(len(self.groups), dtype=vals.dtype)
-        for i, k in enumerate(self.groups.keys()):
-            #print(i, k, self.groups[k])
-            result[i] = np.mean(vals[self.groups[k]])
-        return result</code></pre>
+        def add(self, x):
+                if self._count is None:
+                        self._sum = x.astype(&#34;float64&#34;)
+                        self._count = np.ones_like(self._sum)
+                        self._nnz = np.zeros_like(self._sum)
+                        self._nnz[x &gt; 0] += 1
+                        self._min = x.astype(&#34;float64&#34;)
+                        self._max = x.astype(&#34;float64&#34;)
+                        self._mean = x.astype(&#34;float64&#34;)
+                        self._m2 = np.zeros_like(self._mean)
+                        self._m3 = np.zeros_like(self._mean)
+                        self._m4 = np.zeros_like(self._mean)
+                else:
+                        self._nnz[x &gt; 0] += 1
+                        self._sum += x
+                        self._min = np.minimum(self._min, x)
+                        self._max = np.maximum(self._min, x)
+                        self._count += 1
+                        n = self._count
+                        delta = x - self._mean
+                        delta_n = delta / n
+                        delta_n2 = delta_n ** 2
+                        self._mean += delta_n
+                        term = delta * delta_n * (n - 1)
+                        self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
+                        self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
+                        self._m2 = self._m2 + term
+
+        @property
+        def count(self):
+                return self._count
+
+        @property
+        def sum(self):
+                return self._sum
+
+        @property
+        def nnz(self):
+                return self._nnz
+
+        @property
+        def mean(self):
+                return self._mean
+
+        @property
+        def variance(self):
+                return self._m2 / (self._count - 1)
+
+        @property
+        def skewness(self):
+                return ((self._count ** 0.5) * self._m3) / (self._m2 ** 1.5)
+
+        @property
+        def kurtosis(self):
+                # TODO: subtract 3? (for normal curve = 0)
+                return (self._count * self._m4) / (self._m2 ** 2)
+
+        @property
+        def sd(self):
+                return self.variance ** 0.5
+
+
+class GroupAccumulator:
+        def __init__(self) -&gt; None:
+                self.groups: Dict[int, Accumulator] = {}
+
+        def add(self, label, x) -&gt; None:
+                self.groups.setdefault(label, Accumulator()).add(x)
+
+        def sum(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.sum for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].sum
+
+        def nnz(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.nnz for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].nnz
+
+        def count(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.count for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].count
+
+        def mean(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.mean for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].mean
+
+        def variance(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.variance for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].variance
+
+        def skewness(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.skewness for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].skewness
+
+        def kurtosis(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.kurtosis for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].kurtosis
+
+        def sd(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.sd for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].sd
+
+
+class GroupViewBy:
+        def __init__(self, view: &#34;shoji.view.View&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -&gt; None:
+                self.view = view
+                self.labels = labels
+                if isinstance(self.labels, str):
+                        tensor = view.wsm._get_tensor(self.labels)
+                        if tensor.rank != 1:
+                                raise ValueError(f&#34;Cannot groupby(&#39;{self.labels}&#39;); a rank-1 tensor is required&#34;)
+                self.chunk_size = chunk_size
+                self.projection = projection
+                self.acc: Optional[GroupAccumulator] = None
+
+        def stats(self, of_tensor: str) -&gt; GroupAccumulator:
+                if self.acc is not None:
+                        return self.acc
+                tensor = self.view.wsm._get_tensor(of_tensor)
+                n_rows = self.view.get_length(tensor.dims[0])
+                if self.labels is None:
+                        label_values = np.zeros(n_rows)
+                elif isinstance(self.labels, np.ndarray):
+                        label_values = self.labels
+                else:
+                        label_values = self.view[self.labels]
+                if self.projection is not None:
+                        label_values = [self.projection(x) for x in  label_values]
+                le = LabelEncoder()
+                labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+                acc = GroupAccumulator()
+                for ix in range(0, n_rows, self.chunk_size):
+                        chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
+                        chunk_labels = labels[ix: ix + self.chunk_size]
+                        for i, label in enumerate(chunk_labels):
+                                acc.add(le.classes_[label], chunk[i])
+                return acc
+
+        def sum(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sum()
+
+        def count(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).count()
+
+        def nnz(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).nnz()
+
+        def mean(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).mean()
+
+        def variance(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).variance()
+
+        def skewness(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).skewness()
+
+        def kurtosis(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).kurtosis()
+
+        def sd(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sd()
+
+
+class GroupDimensionBy:
+        def __init__(self, dim: &#34;shoji.dimension.Dimension&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -&gt; None:
+                self.dim = dim
+                assert dim.wsm is not None, &#34;Cannot group by unbound dimension&#34;
+                self.labels = labels
+                if isinstance(self.labels, str):
+                        tensor = dim.wsm._get_tensor(self.labels)
+                        if tensor.rank != 1:
+                                raise ValueError(f&#34;Cannot groupby(&#39;{self.labels}&#39;); a rank-1 tensor is required&#34;)
+                self.chunk_size = chunk_size
+                self.projection = projection
+                self.acc: Optional[GroupAccumulator] = None
+
+        def stats(self, of_tensor: str) -&gt; GroupAccumulator:
+                if self.acc is not None:
+                        return self.acc
+                assert self.dim.wsm is not None
+                le = LabelEncoder()
+                if self.labels is None:
+                        label_values = np.zeros(self.dim.length)
+                elif isinstance(self.labels, np.ndarray):
+                        label_values = self.labels
+                else:
+                        label_values = self.dim.wsm[self.labels][:]
+                if self.projection is not None:
+                        label_values = [self.projection(x) for x in  label_values]
+                labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+                acc = GroupAccumulator()
+                for ix in range(0, self.dim.length, self.chunk_size):
+                        chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
+                        chunk_labels = labels[ix: ix + self.chunk_size]
+                        for i, label in enumerate(chunk_labels):
+                                acc.add(le.classes_[label], chunk[i])
+                return acc
+
+        def sum(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sum()
+
+        def count(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).count()
+
+        def nnz(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).nnz()
+
+        def mean(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).mean()
+
+        def variance(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).variance()
+
+        def skewness(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).skewness()
+
+        def kurtosis(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).kurtosis()
+
+        def sd(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sd()</code></pre>
 </details>
 </section>
 <section>
@@ -66,9 +294,8 @@ class GroupBy:
 <section>
 <h2 class="section-title" id="header-classes">Classes</h2>
 <dl>
-<dt id="shoji.groupby.GroupBy"><code class="flex name class">
-<span>class <span class="ident">GroupBy</span></span>
-<span>(</span><span>view: shoji.View, tensor_name: str, projection: Callable = None)</span>
+<dt id="shoji.groupby.Accumulator"><code class="flex name class">
+<span>class <span class="ident">Accumulator</span></span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -76,35 +303,289 @@ class GroupBy:
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">class GroupBy:
-    def __init__(self, view: &#34;shoji.View&#34;, tensor_name: str, projection: Callable = None) -&gt; None:
-        self.view = view
-        vals = view[tensor_name]
-        if vals.ndim != 1:
-            raise ValueError(f&#34;Cannot groupby() tensor &#39;{tensor_name}&#39; of rank {vals.ndim}; a rank-1 tensor is required&#34;)
-        self.groups: Dict[Any, List] = {}  # Dict of projected values to row indices
-        self.length = len(vals)
-        for i in range(vals.shape[0]):
-            if projection is not None:
-                self.groups.setdefault(projection(vals[i]), []).append(i)
-            else:
-                self.groups.setdefault(vals[i], []).append(i)
+<pre><code class="python">class Accumulator:
+        def __init__(self):
+                self._sum = None
+                self._count = None
+                self._nnz = None
+                self._min = None
+                self._max = None
+                self._mean = None
+                self._m2 = None
+                self._m3 = None
+                self._m4 = None
 
-    def mean(self, tensor_name: str) -&gt; np.ndarray:
-        # TODO: optimize this for very large tensors (avoid reading whole tensor at once)
-        vals = self.view[tensor_name]
-        if len(vals) != self.length:
-            raise ValueError(&#34;Tensors are not the same length in groupby() operation&#34;)
-        result = np.empty(len(self.groups), dtype=vals.dtype)
-        for i, k in enumerate(self.groups.keys()):
-            #print(i, k, self.groups[k])
-            result[i] = np.mean(vals[self.groups[k]])
-        return result</code></pre>
+        def add(self, x):
+                if self._count is None:
+                        self._sum = x.astype(&#34;float64&#34;)
+                        self._count = np.ones_like(self._sum)
+                        self._nnz = np.zeros_like(self._sum)
+                        self._nnz[x &gt; 0] += 1
+                        self._min = x.astype(&#34;float64&#34;)
+                        self._max = x.astype(&#34;float64&#34;)
+                        self._mean = x.astype(&#34;float64&#34;)
+                        self._m2 = np.zeros_like(self._mean)
+                        self._m3 = np.zeros_like(self._mean)
+                        self._m4 = np.zeros_like(self._mean)
+                else:
+                        self._nnz[x &gt; 0] += 1
+                        self._sum += x
+                        self._min = np.minimum(self._min, x)
+                        self._max = np.maximum(self._min, x)
+                        self._count += 1
+                        n = self._count
+                        delta = x - self._mean
+                        delta_n = delta / n
+                        delta_n2 = delta_n ** 2
+                        self._mean += delta_n
+                        term = delta * delta_n * (n - 1)
+                        self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
+                        self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
+                        self._m2 = self._m2 + term
+
+        @property
+        def count(self):
+                return self._count
+
+        @property
+        def sum(self):
+                return self._sum
+
+        @property
+        def nnz(self):
+                return self._nnz
+
+        @property
+        def mean(self):
+                return self._mean
+
+        @property
+        def variance(self):
+                return self._m2 / (self._count - 1)
+
+        @property
+        def skewness(self):
+                return ((self._count ** 0.5) * self._m3) / (self._m2 ** 1.5)
+
+        @property
+        def kurtosis(self):
+                # TODO: subtract 3? (for normal curve = 0)
+                return (self._count * self._m4) / (self._m2 ** 2)
+
+        @property
+        def sd(self):
+                return self.variance ** 0.5</code></pre>
+</details>
+<h3>Instance variables</h3>
+<dl>
+<dt id="shoji.groupby.Accumulator.count"><code class="name">var <span class="ident">count</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def count(self):
+        return self._count</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.kurtosis"><code class="name">var <span class="ident">kurtosis</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def kurtosis(self):
+        # TODO: subtract 3? (for normal curve = 0)
+        return (self._count * self._m4) / (self._m2 ** 2)</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.mean"><code class="name">var <span class="ident">mean</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def mean(self):
+        return self._mean</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.nnz"><code class="name">var <span class="ident">nnz</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def nnz(self):
+        return self._nnz</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.sd"><code class="name">var <span class="ident">sd</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def sd(self):
+        return self.variance ** 0.5</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.skewness"><code class="name">var <span class="ident">skewness</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def skewness(self):
+        return ((self._count ** 0.5) * self._m3) / (self._m2 ** 1.5)</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.sum"><code class="name">var <span class="ident">sum</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def sum(self):
+        return self._sum</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.variance"><code class="name">var <span class="ident">variance</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def variance(self):
+        return self._m2 / (self._count - 1)</code></pre>
+</details>
+</dd>
+</dl>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.groupby.Accumulator.add"><code class="name flex">
+<span>def <span class="ident">add</span></span>(<span>self, x)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def add(self, x):
+        if self._count is None:
+                self._sum = x.astype(&#34;float64&#34;)
+                self._count = np.ones_like(self._sum)
+                self._nnz = np.zeros_like(self._sum)
+                self._nnz[x &gt; 0] += 1
+                self._min = x.astype(&#34;float64&#34;)
+                self._max = x.astype(&#34;float64&#34;)
+                self._mean = x.astype(&#34;float64&#34;)
+                self._m2 = np.zeros_like(self._mean)
+                self._m3 = np.zeros_like(self._mean)
+                self._m4 = np.zeros_like(self._mean)
+        else:
+                self._nnz[x &gt; 0] += 1
+                self._sum += x
+                self._min = np.minimum(self._min, x)
+                self._max = np.maximum(self._min, x)
+                self._count += 1
+                n = self._count
+                delta = x - self._mean
+                delta_n = delta / n
+                delta_n2 = delta_n ** 2
+                self._mean += delta_n
+                term = delta * delta_n * (n - 1)
+                self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
+                self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
+                self._m2 = self._m2 + term</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator"><code class="flex name class">
+<span>class <span class="ident">GroupAccumulator</span></span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class GroupAccumulator:
+        def __init__(self) -&gt; None:
+                self.groups: Dict[int, Accumulator] = {}
+
+        def add(self, label, x) -&gt; None:
+                self.groups.setdefault(label, Accumulator()).add(x)
+
+        def sum(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.sum for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].sum
+
+        def nnz(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.nnz for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].nnz
+
+        def count(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.count for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].count
+
+        def mean(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.mean for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].mean
+
+        def variance(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.variance for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].variance
+
+        def skewness(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.skewness for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].skewness
+
+        def kurtosis(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.kurtosis for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].kurtosis
+
+        def sd(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.sd for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].sd</code></pre>
 </details>
 <h3>Methods</h3>
 <dl>
-<dt id="shoji.groupby.GroupBy.mean"><code class="name flex">
-<span>def <span class="ident">mean</span></span>(<span>self, tensor_name: str) ‑> numpy.ndarray</span>
+<dt id="shoji.groupby.GroupAccumulator.add"><code class="name flex">
+<span>def <span class="ident">add</span></span>(<span>self, label, x) ‑> NoneType</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -112,16 +593,555 @@ class GroupBy:
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def mean(self, tensor_name: str) -&gt; np.ndarray:
-    # TODO: optimize this for very large tensors (avoid reading whole tensor at once)
-    vals = self.view[tensor_name]
-    if len(vals) != self.length:
-        raise ValueError(&#34;Tensors are not the same length in groupby() operation&#34;)
-    result = np.empty(len(self.groups), dtype=vals.dtype)
-    for i, k in enumerate(self.groups.keys()):
-        #print(i, k, self.groups[k])
-        result[i] = np.mean(vals[self.groups[k]])
-    return result</code></pre>
+<pre><code class="python">def add(self, label, x) -&gt; None:
+        self.groups.setdefault(label, Accumulator()).add(x)</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.count"><code class="name flex">
+<span>def <span class="ident">count</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def count(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.count for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].count</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.kurtosis"><code class="name flex">
+<span>def <span class="ident">kurtosis</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def kurtosis(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.kurtosis for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].kurtosis</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.mean"><code class="name flex">
+<span>def <span class="ident">mean</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def mean(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.mean for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].mean</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.nnz"><code class="name flex">
+<span>def <span class="ident">nnz</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def nnz(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.nnz for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].nnz</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.sd"><code class="name flex">
+<span>def <span class="ident">sd</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def sd(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.sd for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].sd</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.skewness"><code class="name flex">
+<span>def <span class="ident">skewness</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def skewness(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.skewness for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].skewness</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.sum"><code class="name flex">
+<span>def <span class="ident">sum</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def sum(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.sum for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].sum</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.variance"><code class="name flex">
+<span>def <span class="ident">variance</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def variance(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.variance for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].variance</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy"><code class="flex name class">
+<span>class <span class="ident">GroupDimensionBy</span></span>
+<span>(</span><span>dim: <a title="shoji.dimension.Dimension" href="dimension.html#shoji.dimension.Dimension">Dimension</a>, labels: Union[str, numpy.ndarray, NoneType], projection: Callable = None, chunk_size: int = 1000)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class GroupDimensionBy:
+        def __init__(self, dim: &#34;shoji.dimension.Dimension&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -&gt; None:
+                self.dim = dim
+                assert dim.wsm is not None, &#34;Cannot group by unbound dimension&#34;
+                self.labels = labels
+                if isinstance(self.labels, str):
+                        tensor = dim.wsm._get_tensor(self.labels)
+                        if tensor.rank != 1:
+                                raise ValueError(f&#34;Cannot groupby(&#39;{self.labels}&#39;); a rank-1 tensor is required&#34;)
+                self.chunk_size = chunk_size
+                self.projection = projection
+                self.acc: Optional[GroupAccumulator] = None
+
+        def stats(self, of_tensor: str) -&gt; GroupAccumulator:
+                if self.acc is not None:
+                        return self.acc
+                assert self.dim.wsm is not None
+                le = LabelEncoder()
+                if self.labels is None:
+                        label_values = np.zeros(self.dim.length)
+                elif isinstance(self.labels, np.ndarray):
+                        label_values = self.labels
+                else:
+                        label_values = self.dim.wsm[self.labels][:]
+                if self.projection is not None:
+                        label_values = [self.projection(x) for x in  label_values]
+                labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+                acc = GroupAccumulator()
+                for ix in range(0, self.dim.length, self.chunk_size):
+                        chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
+                        chunk_labels = labels[ix: ix + self.chunk_size]
+                        for i, label in enumerate(chunk_labels):
+                                acc.add(le.classes_[label], chunk[i])
+                return acc
+
+        def sum(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sum()
+
+        def count(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).count()
+
+        def nnz(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).nnz()
+
+        def mean(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).mean()
+
+        def variance(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).variance()
+
+        def skewness(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).skewness()
+
+        def kurtosis(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).kurtosis()
+
+        def sd(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sd()</code></pre>
+</details>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.groupby.GroupDimensionBy.count"><code class="name flex">
+<span>def <span class="ident">count</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def count(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).count()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.kurtosis"><code class="name flex">
+<span>def <span class="ident">kurtosis</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def kurtosis(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).kurtosis()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.mean"><code class="name flex">
+<span>def <span class="ident">mean</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def mean(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).mean()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.nnz"><code class="name flex">
+<span>def <span class="ident">nnz</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def nnz(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).nnz()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.sd"><code class="name flex">
+<span>def <span class="ident">sd</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def sd(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).sd()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.skewness"><code class="name flex">
+<span>def <span class="ident">skewness</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def skewness(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).skewness()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.stats"><code class="name flex">
+<span>def <span class="ident">stats</span></span>(<span>self, of_tensor: str) ‑> <a title="shoji.groupby.GroupAccumulator" href="#shoji.groupby.GroupAccumulator">GroupAccumulator</a></span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def stats(self, of_tensor: str) -&gt; GroupAccumulator:
+        if self.acc is not None:
+                return self.acc
+        assert self.dim.wsm is not None
+        le = LabelEncoder()
+        if self.labels is None:
+                label_values = np.zeros(self.dim.length)
+        elif isinstance(self.labels, np.ndarray):
+                label_values = self.labels
+        else:
+                label_values = self.dim.wsm[self.labels][:]
+        if self.projection is not None:
+                label_values = [self.projection(x) for x in  label_values]
+        labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+        acc = GroupAccumulator()
+        for ix in range(0, self.dim.length, self.chunk_size):
+                chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
+                chunk_labels = labels[ix: ix + self.chunk_size]
+                for i, label in enumerate(chunk_labels):
+                        acc.add(le.classes_[label], chunk[i])
+        return acc</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.sum"><code class="name flex">
+<span>def <span class="ident">sum</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def sum(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).sum()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupDimensionBy.variance"><code class="name flex">
+<span>def <span class="ident">variance</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def variance(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).variance()</code></pre>
+</details>
+</dd>
+</dl>
+</dd>
+<dt id="shoji.groupby.GroupViewBy"><code class="flex name class">
+<span>class <span class="ident">GroupViewBy</span></span>
+<span>(</span><span>view: <a title="shoji.view.View" href="view.html#shoji.view.View">View</a>, labels: Union[str, numpy.ndarray, NoneType], projection: Callable = None, chunk_size: int = 1000)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">class GroupViewBy:
+        def __init__(self, view: &#34;shoji.view.View&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -&gt; None:
+                self.view = view
+                self.labels = labels
+                if isinstance(self.labels, str):
+                        tensor = view.wsm._get_tensor(self.labels)
+                        if tensor.rank != 1:
+                                raise ValueError(f&#34;Cannot groupby(&#39;{self.labels}&#39;); a rank-1 tensor is required&#34;)
+                self.chunk_size = chunk_size
+                self.projection = projection
+                self.acc: Optional[GroupAccumulator] = None
+
+        def stats(self, of_tensor: str) -&gt; GroupAccumulator:
+                if self.acc is not None:
+                        return self.acc
+                tensor = self.view.wsm._get_tensor(of_tensor)
+                n_rows = self.view.get_length(tensor.dims[0])
+                if self.labels is None:
+                        label_values = np.zeros(n_rows)
+                elif isinstance(self.labels, np.ndarray):
+                        label_values = self.labels
+                else:
+                        label_values = self.view[self.labels]
+                if self.projection is not None:
+                        label_values = [self.projection(x) for x in  label_values]
+                le = LabelEncoder()
+                labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+                acc = GroupAccumulator()
+                for ix in range(0, n_rows, self.chunk_size):
+                        chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
+                        chunk_labels = labels[ix: ix + self.chunk_size]
+                        for i, label in enumerate(chunk_labels):
+                                acc.add(le.classes_[label], chunk[i])
+                return acc
+
+        def sum(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sum()
+
+        def count(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).count()
+
+        def nnz(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).nnz()
+
+        def mean(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).mean()
+
+        def variance(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).variance()
+
+        def skewness(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).skewness()
+
+        def kurtosis(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).kurtosis()
+
+        def sd(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).sd()</code></pre>
+</details>
+<h3>Methods</h3>
+<dl>
+<dt id="shoji.groupby.GroupViewBy.count"><code class="name flex">
+<span>def <span class="ident">count</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def count(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).count()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.kurtosis"><code class="name flex">
+<span>def <span class="ident">kurtosis</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def kurtosis(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).kurtosis()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.mean"><code class="name flex">
+<span>def <span class="ident">mean</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def mean(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).mean()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.nnz"><code class="name flex">
+<span>def <span class="ident">nnz</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def nnz(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).nnz()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.sd"><code class="name flex">
+<span>def <span class="ident">sd</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def sd(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).sd()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.skewness"><code class="name flex">
+<span>def <span class="ident">skewness</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def skewness(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).skewness()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.stats"><code class="name flex">
+<span>def <span class="ident">stats</span></span>(<span>self, of_tensor: str) ‑> <a title="shoji.groupby.GroupAccumulator" href="#shoji.groupby.GroupAccumulator">GroupAccumulator</a></span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def stats(self, of_tensor: str) -&gt; GroupAccumulator:
+        if self.acc is not None:
+                return self.acc
+        tensor = self.view.wsm._get_tensor(of_tensor)
+        n_rows = self.view.get_length(tensor.dims[0])
+        if self.labels is None:
+                label_values = np.zeros(n_rows)
+        elif isinstance(self.labels, np.ndarray):
+                label_values = self.labels
+        else:
+                label_values = self.view[self.labels]
+        if self.projection is not None:
+                label_values = [self.projection(x) for x in  label_values]
+        le = LabelEncoder()
+        labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
+        acc = GroupAccumulator()
+        for ix in range(0, n_rows, self.chunk_size):
+                chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
+                chunk_labels = labels[ix: ix + self.chunk_size]
+                for i, label in enumerate(chunk_labels):
+                        acc.add(le.classes_[label], chunk[i])
+        return acc</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.sum"><code class="name flex">
+<span>def <span class="ident">sum</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def sum(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).sum()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.variance"><code class="name flex">
+<span>def <span class="ident">variance</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def variance(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).variance()</code></pre>
 </details>
 </dd>
 </dl>
@@ -143,9 +1163,59 @@ class GroupBy:
 <li><h3><a href="#header-classes">Classes</a></h3>
 <ul>
 <li>
-<h4><code><a title="shoji.groupby.GroupBy" href="#shoji.groupby.GroupBy">GroupBy</a></code></h4>
-<ul class="">
-<li><code><a title="shoji.groupby.GroupBy.mean" href="#shoji.groupby.GroupBy.mean">mean</a></code></li>
+<h4><code><a title="shoji.groupby.Accumulator" href="#shoji.groupby.Accumulator">Accumulator</a></code></h4>
+<ul class="two-column">
+<li><code><a title="shoji.groupby.Accumulator.add" href="#shoji.groupby.Accumulator.add">add</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.count" href="#shoji.groupby.Accumulator.count">count</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.kurtosis" href="#shoji.groupby.Accumulator.kurtosis">kurtosis</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.mean" href="#shoji.groupby.Accumulator.mean">mean</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.nnz" href="#shoji.groupby.Accumulator.nnz">nnz</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.sd" href="#shoji.groupby.Accumulator.sd">sd</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.skewness" href="#shoji.groupby.Accumulator.skewness">skewness</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.sum" href="#shoji.groupby.Accumulator.sum">sum</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.variance" href="#shoji.groupby.Accumulator.variance">variance</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.groupby.GroupAccumulator" href="#shoji.groupby.GroupAccumulator">GroupAccumulator</a></code></h4>
+<ul class="two-column">
+<li><code><a title="shoji.groupby.GroupAccumulator.add" href="#shoji.groupby.GroupAccumulator.add">add</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.count" href="#shoji.groupby.GroupAccumulator.count">count</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.kurtosis" href="#shoji.groupby.GroupAccumulator.kurtosis">kurtosis</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.mean" href="#shoji.groupby.GroupAccumulator.mean">mean</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.nnz" href="#shoji.groupby.GroupAccumulator.nnz">nnz</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.sd" href="#shoji.groupby.GroupAccumulator.sd">sd</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.skewness" href="#shoji.groupby.GroupAccumulator.skewness">skewness</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.sum" href="#shoji.groupby.GroupAccumulator.sum">sum</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.variance" href="#shoji.groupby.GroupAccumulator.variance">variance</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.groupby.GroupDimensionBy" href="#shoji.groupby.GroupDimensionBy">GroupDimensionBy</a></code></h4>
+<ul class="two-column">
+<li><code><a title="shoji.groupby.GroupDimensionBy.count" href="#shoji.groupby.GroupDimensionBy.count">count</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.kurtosis" href="#shoji.groupby.GroupDimensionBy.kurtosis">kurtosis</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.mean" href="#shoji.groupby.GroupDimensionBy.mean">mean</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.nnz" href="#shoji.groupby.GroupDimensionBy.nnz">nnz</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.sd" href="#shoji.groupby.GroupDimensionBy.sd">sd</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.skewness" href="#shoji.groupby.GroupDimensionBy.skewness">skewness</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.stats" href="#shoji.groupby.GroupDimensionBy.stats">stats</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.sum" href="#shoji.groupby.GroupDimensionBy.sum">sum</a></code></li>
+<li><code><a title="shoji.groupby.GroupDimensionBy.variance" href="#shoji.groupby.GroupDimensionBy.variance">variance</a></code></li>
+</ul>
+</li>
+<li>
+<h4><code><a title="shoji.groupby.GroupViewBy" href="#shoji.groupby.GroupViewBy">GroupViewBy</a></code></h4>
+<ul class="two-column">
+<li><code><a title="shoji.groupby.GroupViewBy.count" href="#shoji.groupby.GroupViewBy.count">count</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.kurtosis" href="#shoji.groupby.GroupViewBy.kurtosis">kurtosis</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.mean" href="#shoji.groupby.GroupViewBy.mean">mean</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.nnz" href="#shoji.groupby.GroupViewBy.nnz">nnz</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.sd" href="#shoji.groupby.GroupViewBy.sd">sd</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.skewness" href="#shoji.groupby.GroupViewBy.skewness">skewness</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.stats" href="#shoji.groupby.GroupViewBy.stats">stats</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.sum" href="#shoji.groupby.GroupViewBy.sum">sum</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.variance" href="#shoji.groupby.GroupViewBy.variance">variance</a></code></li>
 </ul>
 </li>
 </ul>

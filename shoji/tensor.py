@@ -139,6 +139,53 @@ dimension (and it's declared variable-length), then you can only append rows
 simultaneously to all those tensors (using `shoji.dimension.Dimension.append`). 
 
 
+## Reading from tensors
+
+The universal method for reading data in shoji is to create a `shoji.view.View`
+of the workspace. However, sometimes you just want to read from one tensor
+and don't care about creating a view. Shoji supports indexing tensors similar 
+to numpy "fancy indexing" (and similar to how views are created):
+
+```python
+x = ws.Expression[:]  # Read the whole tensor
+y = ws.Expression[10:20]  # Read a slice
+z = ws.Expression[(1, 2, 5, 9)]  # Read specific rows
+w = ws.Expression[(True, False, True)]  # Read rows given by bool mask array
+```
+
+The above expressions are just shorthands for creating the corresponding view
+and immediately reading from the tensor. There is no difference in performance.
+For example, the two expressions below are equivalent:
+
+```python
+x = ws.Expression[:]
+x = ws[:].Expression
+```
+
+### Reading a whole tensor non-transactionally
+
+All reads and writes are transactional by default, and must therefore finish in less than 
+five seconds. This can be an issue for large tensors, e.g. sometimes trying
+to read a whole big matrix (`ws.Expression[:]`) fails because it takes longer
+than five seconds. What to do? If you need the transactional consistency guarantees,
+then you will have to read the tensor in chunks (and deal with any errors):
+
+```python
+u = np.zeros((ws.cells.length, ws.genes.length), dtype="uint16")
+for ix in range(0, ws.cells.length, 1000):
+	u[ix:ix + 1000] = ws.Unspliced[ix:ix + 1000]
+```
+
+But sometimes you just want to read a whole, large tensor
+and you don't need transactional guarantees. For those use cases, the ellipsis (...)
+can be used in place of the color (:) to load tensors:
+
+```python
+x = ws.Expression[...]  # Read the tensor non-transactionally
+y = ws.Expression[:]  # Read the tensor transactionally; fails if longer than 5 seconds
+```
+
+
 ## Jagged tensors
 
 If any non-first dimension is declared with variable size, then the tensor is 
@@ -176,7 +223,7 @@ limits the total size of the row of a tensor. If all the data for a single row c
 be retrieved in less than five seconds, you will have to redesign the data model (e.g. 
 breaking out some dimensions to a separate tensor).
 """
-from typing import Tuple, Union, List, Optional, Callable
+from typing import Tuple, Union, List, Optional, Callable, Any
 import numpy as np
 import shoji
 
@@ -271,6 +318,16 @@ class Tensor:
 			The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
 		"""
 		self.dtype = dtype
+		self.bytewidth = -1  # string dtype doesn't have a fixed bytewidth
+		if dtype in ("bool", "uint8", "int8"):
+			self.bytewidth = 1
+		elif dtype in ("uint16", "int16", "float16"):
+			self.bytewidth = 2
+		elif dtype in ("uint32", "int32", "float32"):
+			self.bytewidth = 3
+		elif dtype in ("uint64", "int64", "float64"):
+			self.bytewidth = 4
+		
 		# Check that the type is valid
 		if dtype not in Tensor.valid_types:
 			raise TypeError(f"Invalid Tensor type {dtype}")
@@ -314,8 +371,18 @@ class Tensor:
 			return self.shape[0]
 		return 0
 
-	def __getitem__(self, expr: Union["shoji.Filter", tuple, slice, int]) -> np.ndarray:
+	def __getitem__(self, expr: Union["shoji.Filter", tuple, slice, int, Any]) -> np.ndarray:  # We have to include Any here to support ellipsis, which is untypable in mypy
 		assert self.wsm is not None, "Tensor is not bound to a database"
+		# Is it an ellipsis? Read the tensor non-transactionally in batches
+		if expr == ...:
+			if self.dtype == "string" or self.rank == 0:
+				return shoji.View(self.wsm, ())[self.name]
+			x = np.zeros(self.shape, dtype=self.dtype)
+			BYTES_PER_BATCH = 1_000_000
+			n_rows_per_batch = max(1, BYTES_PER_BATCH // int(self.bytewidth * np.prod(self.shape) / self.shape[0]))
+			for ix in range(0, self.shape[0], n_rows_per_batch):
+				x[ix:ix + n_rows_per_batch] = self.wsm[self.name][ix:ix + n_rows_per_batch]
+			return x
 		# Maybe it's a Filter?
 		if isinstance(expr, shoji.Filter):
 			return shoji.View(self.wsm, (expr,))[self.name]

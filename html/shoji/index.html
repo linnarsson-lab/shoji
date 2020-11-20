@@ -321,6 +321,7 @@ from .workspace import Workspace, WorkspaceManager
 from .connect import connect
 from .filter import Filter, CompoundFilter, TensorFilter, ConstFilter, DimensionBoolFilter, DimensionIndicesFilter, DimensionSliceFilter, TensorBoolFilter, TensorIndicesFilter, TensorSliceFilter
 from .transaction import Transaction
+from .groupby import GroupViewBy, GroupDimensionBy
 from .view import View
 from .io import __nil__  # This is just to get the io module in the shoji namespace</code></pre>
 </details>
@@ -337,9 +338,17 @@ from .io import __nil__  # This is just to get the io module in the shoji namesp
 <div class="desc"><p>Dimensions represent named, shared tensor axes. When two tensors share an axis, they are
 constrained to have the same number of elements along that …</p></div>
 </dd>
+<dt><code class="name"><a title="shoji.export_import" href="export_import.html">shoji.export_import</a></code></dt>
+<dd>
+<div class="desc"><p>Exporting and importing workspaces</p></div>
+</dd>
 <dt><code class="name"><a title="shoji.filter" href="filter.html">shoji.filter</a></code></dt>
 <dd>
 <div class="desc"><p>Using filters …</p></div>
+</dd>
+<dt><code class="name"><a title="shoji.groupby" href="groupby.html">shoji.groupby</a></code></dt>
+<dd>
+<div class="desc"></div>
 </dd>
 <dt><code class="name"><a title="shoji.io" href="io.html">shoji.io</a></code></dt>
 <dd>
@@ -405,7 +414,9 @@ like folders in a file system …</p></div>
 <ul>
 <li><code><a title="shoji.connect" href="connect.html">shoji.connect</a></code></li>
 <li><code><a title="shoji.dimension" href="dimension.html">shoji.dimension</a></code></li>
+<li><code><a title="shoji.export_import" href="export_import.html">shoji.export_import</a></code></li>
 <li><code><a title="shoji.filter" href="filter.html">shoji.filter</a></code></li>
+<li><code><a title="shoji.groupby" href="groupby.html">shoji.groupby</a></code></li>
 <li><code><a title="shoji.io" href="io.html">shoji.io</a></code></li>
 <li><code><a title="shoji.tensor" href="tensor.html">shoji.tensor</a></code></li>
 <li><code><a title="shoji.transaction" href="transaction.html">shoji.transaction</a></code></li>

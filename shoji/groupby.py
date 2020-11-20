@@ -9,7 +9,9 @@ import shoji
 # and to support labeled groups of array-values
 class Accumulator:
 	def __init__(self):
-		self._count = 0
+		self._sum = None
+		self._count = None
+		self._nnz = None
 		self._min = None
 		self._max = None
 		self._mean = None
@@ -18,15 +20,20 @@ class Accumulator:
 		self._m4 = None
 
 	def add(self, x):
-		if self._count == 0:
-			self._count = 1
-			self._min = x
-			self._max = x
-			self._mean = x
+		if self._count is None:
+			self._sum = x.astype("float64")
+			self._count = np.ones_like(self._sum)
+			self._nnz = np.zeros_like(self._sum)
+			self._nnz[x > 0] += 1
+			self._min = x.astype("float64")
+			self._max = x.astype("float64")
+			self._mean = x.astype("float64")
 			self._m2 = np.zeros_like(self._mean)
 			self._m3 = np.zeros_like(self._mean)
 			self._m4 = np.zeros_like(self._mean)
 		else:
+			self._nnz[x > 0] += 1
+			self._sum += x
 			self._min = np.minimum(self._min, x)
 			self._max = np.maximum(self._min, x)
 			self._count += 1
@@ -43,6 +50,14 @@ class Accumulator:
 	@property
 	def count(self):
 		return self._count
+
+	@property
+	def sum(self):
+		return self._sum
+
+	@property
+	def nnz(self):
+		return self._nnz
 
 	@property
 	def mean(self):
@@ -72,6 +87,18 @@ class GroupAccumulator:
 
 	def add(self, label, x) -> None:
 		self.groups.setdefault(label, Accumulator()).add(x)
+
+	def sum(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.sum for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].sum
+
+	def nnz(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.nnz for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].nnz
 
 	def count(self, label = None) -> np.ndarray:
 		if label is None:
@@ -111,7 +138,7 @@ class GroupAccumulator:
 
 
 class GroupViewBy:
-	def __init__(self, view: "shoji.View", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
+	def __init__(self, view: "shoji.view.View", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
 		self.view = view
 		self.labels = labels
 		if isinstance(self.labels, str):
@@ -122,7 +149,7 @@ class GroupViewBy:
 		self.projection = projection
 		self.acc: Optional[GroupAccumulator] = None
 
-	def stats(self, of_tensor: str) -> np.ndarray:
+	def stats(self, of_tensor: str) -> GroupAccumulator:
 		if self.acc is not None:
 			return self.acc
 		tensor = self.view.wsm._get_tensor(of_tensor)
@@ -145,8 +172,14 @@ class GroupViewBy:
 				acc.add(le.classes_[label], chunk[i])
 		return acc
 
+	def sum(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).sum()
+
 	def count(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).count()
+
+	def nnz(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).nnz()
 
 	def mean(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).mean()
@@ -165,7 +198,7 @@ class GroupViewBy:
 
 
 class GroupDimensionBy:
-	def __init__(self, dim: "shoji.Dimension", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
+	def __init__(self, dim: "shoji.dimension.Dimension", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
 		self.dim = dim
 		assert dim.wsm is not None, "Cannot group by unbound dimension"
 		self.labels = labels
@@ -177,7 +210,7 @@ class GroupDimensionBy:
 		self.projection = projection
 		self.acc: Optional[GroupAccumulator] = None
 
-	def stats(self, of_tensor: str) -> np.ndarray:
+	def stats(self, of_tensor: str) -> GroupAccumulator:
 		if self.acc is not None:
 			return self.acc
 		assert self.dim.wsm is not None
@@ -199,8 +232,14 @@ class GroupDimensionBy:
 				acc.add(le.classes_[label], chunk[i])
 		return acc
 
+	def sum(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).sum()
+
 	def count(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).count()
+
+	def nnz(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).nnz()
 
 	def mean(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).mean()

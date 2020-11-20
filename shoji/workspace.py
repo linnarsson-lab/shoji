@@ -77,14 +77,14 @@ del db.scRNA
 
 **WARNING**: Deleting a workspace takes effect immediately and without confirmation. All sub-workspaces and all tensors and dimensions that they contain are deleted. The action cannot be undone.
 """
-from typing import Any, Tuple, Union, List
+from typing import Any, Tuple, Union, List, Dict
 import fdb
+import os
 import numpy as np
 import logging
-from tqdm import trange
 import loompy
 import shoji
-import timeit
+import h5py
 
 
 class Workspace:
@@ -122,10 +122,15 @@ class WorkspaceManager:
 	def _workspaces(self) -> List[str]:
 		return self._subdir.list(self._db.transaction)
 
+	def _get_workspace(self, name: str) -> "WorkspaceManager":
+		ws = self[name]
+		assert isinstance(ws, shoji.WorkspaceManager), f"'{name}' is not a workspace"
+		return ws
+
 	def _dimensions(self) -> List[str]:
 		return [self._subdir["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["dimensions"].range()]]
 
-	def _get_dimension(self, name: str) -> shoji.Tensor:
+	def _get_dimension(self, name: str) -> shoji.Dimension:
 		dim = self[name]
 		assert isinstance(dim, shoji.Dimension), f"'{name}' is not a dimension"
 		return dim
@@ -154,16 +159,39 @@ class WorkspaceManager:
 			yield self[t]
 
 	def __contains__(self, name: str) -> bool:
-		return shoji.io.get_entity(self._db.transaction, self, name) is not None
+		entity = shoji.io.get_entity(self._db.transaction, self, name)
+		if entity is not None:
+			return True
+		parts = name.split(".")
+		entity = shoji.io.get_entity(self._db.transaction, self, parts[0])
+		if entity is None:
+			return False
+		if len(parts) == 1:
+			return True
+		else:
+			if isinstance(entity, shoji.WorkspaceManager):
+				return entity.__contains__(".".join(parts[1:]))
+			else:
+				raise ValueError("First part of a multi-part name must be a workspace")
 
 	def __getattr__(self, name: str) -> Union["WorkspaceManager", shoji.Dimension, shoji.Tensor]:
 		if name.startswith("_"):  # Jupyter calls this method with names like "__wrapped__" and we want to avoid a futile database roundtrip
 			return super().__getattribute__(name)
-		result = shoji.io.get_entity(self._db.transaction, self, name)
-		if result is None:
+		entity = shoji.io.get_entity(self._db.transaction, self, name)
+		if entity is not None:
+			return entity
+		# The name could be a multi-part expression like x.y.z
+		parts = name.split(".")
+		entity = shoji.io.get_entity(self._db.transaction, self, parts[0])
+		if entity is None:
 			return super().__getattribute__(name)
+		if len(parts) == 1:
+			return entity
 		else:
-			return result
+			if isinstance(entity, shoji.WorkspaceManager):
+				return entity.__getattr__(".".join(parts[1:]))
+			else:
+				raise ValueError("First part of a multi-part name must be a workspace")
 
 	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["WorkspaceManager", shoji.Dimension, "shoji.View", shoji.Tensor]:
 		# Try to read an attribute on the object
@@ -186,6 +214,8 @@ class WorkspaceManager:
 		raise KeyError(f"Invalid key '{expr}' (only filter expression or : allowed)")
 
 	def __setattr__(self, name: str, value: Any) -> None:
+		if "." in name:
+			raise AttributeError(f"Invalid name '{name}' (names cannot contain periods (.))")
 		if isinstance(value, Workspace):
 			if name in self:
 				raise AttributeError(f"Cannot overwrite existing entity with new workspace {name}")
@@ -213,15 +243,6 @@ class WorkspaceManager:
 				else:
 					raise AttributeError(f"Cannot create new tensor '{name}' because it would overwrite existing entity")
 			shoji.io.create_tensor(self._db.transaction, self, name, tensor)
-			# if tensor.inits is not None:
-			# 	dim = None
-			# 	if tensor.rank > 0 and isinstance(tensor.dims[0], str):
-			# 		dim = shoji.io.get_dimension(self._db.transaction, self, tensor.dims[0])
-			# 		if dim is not None:
-			# 			# This ensures that all dimension constraints are properly checked
-			# 			shoji.io.append_tensors(self._db.transaction, self, tensor.dims[0], {name: tensor.inits.values})
-			# 			return
-			# 	shoji.io.write_tensor_values(self._db.transaction, self, name, tensor.inits)
 		else:
 			super().__setattr__(name, value)
 	
@@ -234,7 +255,18 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
-	def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None) -> None:
+	def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None, *, fix_expression_dtype: bool = False) -> None:
+		"""
+		Load a loom files into a workspace
+
+		Args:
+			f						Filename (full path)
+			layers					Layers to load, or None to load all layers
+			verbose					If true, log progress
+			dimension_names			2-tuple of strings to use as dimension names for (rows, cols), or None to use ("genes", "cells")
+			fix_expression_dtype	If true, fix a legacy mistake in some loom files where the main matrix is float32 but should be uint16
+		"""
+
 		def fix_name(name, suffix, other_names):
 			if name in other_names:
 				name += "_" + suffix
@@ -275,7 +307,7 @@ class WorkspaceManager:
 				d[name] = ds.ra[key]
 				dims = (genes_dim, ) + vals.shape[1:]
 				self[name] = shoji.Tensor("string" if dtype == "object" else dtype, dims=dims)
-			self[genes_dim].append(d)
+			self._get_dimension(genes_dim).append(d)
 			self[genes_dim] = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
 			
 			for key, vals in ds.ca.items():
@@ -287,7 +319,7 @@ class WorkspaceManager:
 			if verbose:
 				logging.info("Loading column attributes and matrix layers")
 			STEP = 2000
-			for i in trange(0, ds.shape[1], STEP):
+			for i in range(0, ds.shape[1], STEP):
 				d = {}
 				for key in ds.ca.keys():
 					name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
@@ -296,10 +328,106 @@ class WorkspaceManager:
 					name = "Expression" if key == "" else key
 					name = fix_name(name, "layer", ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
 					dtype = ds.layers[key].dtype.name
+					if name == "Expression" and fix_expression_dtype:
+						dtype = "uint16"
 					if i == 0:
 						self[name] = shoji.Tensor("string" if dtype == "object" else dtype, (cells_dim, genes_dim))
 					d[name] = ds.layers[key][:, i:i + STEP].T
-				self[cells_dim].append(d)
+					if name == "Expression" and fix_expression_dtype:
+						d[name] = d[name].astype("uint16")
+				self._get_dimension(cells_dim).append(d)
+
+	def _import(self, f: str, recursive: bool = False, group_name: str = "/"):
+		"""
+		Import a previously exported workspace
+
+		Args:
+			f		The file name (full path)
+			recursive	If true, sub-workspaces will also be imported
+			group_name	The name of the HDF5 group from which to import
+		"""
+
+		# TODO: rewrite this to load from HDF5 not the workspace
+		h5 = h5py.File(f, "r")
+		group = h5.require_group(group_name)
+		for dname in self._dimensions():
+			dim = self._get_dimension(dname)
+			group.attrs["Dimension$" + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+		tensors: Dict[str, shoji.Tensor] = {}
+		for tname in self._tensors():
+			tensor = self._get_tensor(tname)
+			group.attrs["Tensor$" + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
+			group.create_dataset(
+				tname,
+				tensor.shape,
+				tensor.dtype # TODO: get this right
+			)
+			if tensor.rank > 0 and isinstance(tensor.dims[0], str):
+				tensors[tensor.dims[0]] = tensor
+			else:
+				# Read the whole tensor
+				data = tensor[:]		
+		ds: h5py.Dataset = group[tname]
+		n_rows_per_read = 1000
+		ix = 0
+		while True:
+			try:
+				data = tensor[ix: ix + n_rows_per_read]
+				ds[ix: ix + n_rows_per_read] = data
+			except fdb.impl.FDBError as e:
+				if e.code == 1007:
+					n_rows_per_read = max(1, n_rows_per_read // 2)
+					continue
+				raise e
+
+		if recursive:
+			for wsname in self._workspaces():
+				self._get_workspace(wsname)._export(f, True, os.path.join(group_name, wsname))		
+		h5.close()
+
+	def _export(self, f: str, recursive: bool = False, group_name: str = "/"):
+		"""
+		Export the workspace to an HDF5 file
+
+		Args:
+			f			The file name (full path)
+			recursive	If true, sub-workspaces will be exported to HDF5 sub-groups
+			group_name	The name of the HDF5 group where the workspace should be stored
+
+		Remarks:
+			If the file does not exist, it will be created
+		"""
+		h5 = h5py.File(f, "a")
+		group = h5.require_group(group_name)
+
+		for dname in self._dimensions():
+			dim = self._get_dimension(dname)
+			group.attrs["Dimension$" + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+		for tname in self._tensors():
+			tensor = self._get_tensor(tname)
+			group.attrs["Tensor$" + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
+			group.create_dataset(tname, tensor.shape, tensor.dtype)
+			ds: h5py.Dataset = group[tname]
+			# Now read/write the dataset
+			n_rows_per_read = 1000
+			ix = 0
+			while True:
+				try:
+					data = tensor[ix: ix + n_rows_per_read]
+					ds[ix: ix + n_rows_per_read] = data
+				except fdb.impl.FDBError as e:
+					if e.code == 1007:
+						n_rows_per_read = max(1, n_rows_per_read // 2)
+						continue
+					raise e
+
+		if recursive:
+			for wsname in self._workspaces():
+				self._get_workspace(wsname)._export(f, True, os.path.join(group_name, wsname))
+		
+		h5.close()
 			
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
