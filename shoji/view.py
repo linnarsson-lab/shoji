@@ -192,10 +192,7 @@ class NonTransactionalView:
 		return xr.Dataset(variables)
 
 	def get_length(self, dim: str) -> int:
-		if dim in self.filters:
-			return len(self.filters[dim].get_rows(self.wsm))
-		else:
-			return self.wsm._get_dimension(dim).length
+		return self.view.get_length(dim)
 
 	def __getattr__(self, name: str) -> np.ndarray:
 		# Get the tensor
@@ -215,7 +212,7 @@ class NonTransactionalView:
 			result = shoji.io.read_tensor_values(self.view.wsm._db.transaction, self.view.wsm, name, tensor, indices)
 		else:
 			shape = self.view.get_shape(tensor)  # Shape of expected result from this view after filtering
-			result = np.zeros(shape, dtype=tensor.dtype)
+			result = np.zeros((shape[0],) + tensor.shape[1:], dtype=tensor.dtype)
 			BYTES_PER_BATCH = 10_000_000
 			n_rows_per_batch = max(1, BYTES_PER_BATCH // int(tensor.bytewidth * np.prod(tensor.shape[1:])))
 			for ix in range(0, shape[0], n_rows_per_batch):
