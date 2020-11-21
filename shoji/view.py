@@ -116,7 +116,7 @@ class View:
 
 		indices = None
 		if tensor.rank > 0 and tensor.dims[0] in self.filters:
-			indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
+			indices = np.sort(self.filters[tensor.dims[0]].get_rows(self.wsm))
 		# Read the tensor (all or selected rows)
 		result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
 		# Filter the remaining dimensions
@@ -201,10 +201,15 @@ class NonTransactionalView:
 		# Get the tensor
 		tensor = self.view.wsm[name]
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
+		
+		if tensor.rank == 0:
+			return self.view[name]
 
-		indices = None
-		if tensor.rank > 0 and tensor.dims[0] in self.view.filters:
-			indices = self.view.filters[tensor.dims[0]].get_rows(self.view.wsm)
+		if tensor.dims[0] in self.view.filters:
+			indices = np.sort(self.view.filters[tensor.dims[0]].get_rows(self.view.wsm))
+		else:
+			indices = np.arange(tensor.shape[0])
+
 		# Read the tensor (all or selected rows)
 		if tensor.dtype == "string" or tensor.rank == 0:
 			result = shoji.io.read_tensor_values(self.view.wsm._db.transaction, self.view.wsm, name, tensor, indices)
@@ -214,7 +219,8 @@ class NonTransactionalView:
 			BYTES_PER_BATCH = 10_000_000
 			n_rows_per_batch = max(1, BYTES_PER_BATCH // int(tensor.bytewidth * np.prod(tensor.shape[1:])))
 			for ix in range(0, shape[0], n_rows_per_batch):
-				result[ix:ix + n_rows_per_batch] = self.view._read_chunk(tensor, ix, ix + n_rows_per_batch)
+				result[ix:ix + n_rows_per_batch] = shoji.io.read_tensor_values(self.view.wsm._db.transaction, self.view.wsm, name, tensor, indices[ix: ix + n_rows_per_batch])
+
 		# Filter the remaining dimensions
 		for i, dim in enumerate(tensor.dims):
 			if i == 0:
