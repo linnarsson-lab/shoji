@@ -212,7 +212,7 @@ class NonTransactionalView:
 			shape = self.view.get_shape(tensor)  # Shape of expected result from this view after filtering
 			result = np.zeros(shape, dtype=tensor.dtype)
 			BYTES_PER_BATCH = 10_000_000
-			n_rows_per_batch = max(1, BYTES_PER_BATCH // int(tensor.bytewidth * np.prod(tensor.shape) / tensor.shape[0]))
+			n_rows_per_batch = max(1, BYTES_PER_BATCH // int(tensor.bytewidth * np.prod(tensor.shape[1:])))
 			for ix in range(0, shape[0], n_rows_per_batch):
 				result[ix:ix + n_rows_per_batch] = self.view._read_chunk(tensor, ix, ix + n_rows_per_batch)
 		# Filter the remaining dimensions
