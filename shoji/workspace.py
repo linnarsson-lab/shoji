@@ -193,7 +193,7 @@ class WorkspaceManager:
 			else:
 				raise ValueError("First part of a multi-part name must be a workspace")
 
-	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["WorkspaceManager", shoji.Dimension, "shoji.View", shoji.Tensor]:
+	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["WorkspaceManager", shoji.Dimension, "shoji.View", "shoji.NonTransactionalView", shoji.Tensor]:
 		# Try to read an attribute on the object
 		if isinstance(expr, str):
 			return self.__getattr__(expr)
@@ -203,7 +203,11 @@ class WorkspaceManager:
 		# Maybe it's a Filter, or a tuple of Filters?
 		if isinstance(expr, shoji.Filter):
 			return shoji.View(self, (expr,))
+		elif expr == ...:
+			return shoji.NonTransactionalView(shoji.View(self, ()))
 		elif isinstance(expr, tuple) and isinstance(expr[0], shoji.Filter):
+			if len(expr) > 1 and expr[-1] == ...:
+				return shoji.NonTransactionalView(shoji.View(self, expr[:-1]))
 			return shoji.View(self, expr)
 		# Or a slice?
 		if isinstance(expr, slice):

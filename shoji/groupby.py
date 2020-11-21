@@ -166,7 +166,7 @@ class GroupViewBy:
 		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
 		acc = GroupAccumulator()
 		for ix in range(0, n_rows, self.chunk_size):
-			chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
+			chunk = self.view._read_chunk(tensor, ix, ix + self.chunk_size)
 			chunk_labels = labels[ix: ix + self.chunk_size]
 			for i, label in enumerate(chunk_labels):
 				acc.add(le.classes_[label], chunk[i])

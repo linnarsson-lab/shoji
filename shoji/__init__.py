@@ -175,5 +175,5 @@ from .connect import connect
 from .filter import Filter, CompoundFilter, TensorFilter, ConstFilter, DimensionBoolFilter, DimensionIndicesFilter, DimensionSliceFilter, TensorBoolFilter, TensorIndicesFilter, TensorSliceFilter
 from .transaction import Transaction
 from .groupby import GroupViewBy, GroupDimensionBy
-from .view import View
+from .view import View, NonTransactionalView
 from .io import __nil__  # This is just to get the io module in the shoji namespace

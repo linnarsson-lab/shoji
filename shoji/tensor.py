@@ -164,8 +164,13 @@ x = ws[:].Expression
 
 ### Reading a whole tensor non-transactionally
 
-All reads and writes are transactional by default, and must therefore finish in less than 
-five seconds. This can be an issue for large tensors, e.g. sometimes trying
+All reads and writes are transactional by default. For reads, this means 
+in particular that the whole read operation sees a 
+consistent view of the database, and is not affected by concurrent writes. However, 
+it also means every read must finish in five seconds (the transaction limit). As a 
+consequence, it may be impossible to read large tensors directly.
+
+This can be an issue for large tensors, e.g. sometimes trying
 to read a whole big matrix (`ws.Expression[:]`) fails because it takes longer
 than five seconds. What to do? If you need the transactional consistency guarantees,
 then you will have to read the tensor in chunks (and deal with any errors):
@@ -184,6 +189,10 @@ can be used in place of the color (:) to load tensors:
 x = ws.Expression[...]  # Read the tensor non-transactionally
 y = ws.Expression[:]  # Read the tensor transactionally; fails if longer than 5 seconds
 ```
+The drawback is that if there are concurrent writes to the tensor, you will get an 
+inconsistent result. I.e. if you're reading a big matrix while another process is 
+modifying it, some parts will come from the old version, and some from the new. 
+Ellipsis supports reading only; you cannot assign to a tensor using ellipsis.
 
 
 ## Jagged tensors
@@ -375,14 +384,7 @@ class Tensor:
 		assert self.wsm is not None, "Tensor is not bound to a database"
 		# Is it an ellipsis? Read the tensor non-transactionally in batches
 		if expr == ...:
-			if self.dtype == "string" or self.rank == 0:
-				return shoji.View(self.wsm, ())[self.name]
-			x = np.zeros(self.shape, dtype=self.dtype)
-			BYTES_PER_BATCH = 1_000_000
-			n_rows_per_batch = max(1, BYTES_PER_BATCH // int(self.bytewidth * np.prod(self.shape) / self.shape[0]))
-			for ix in range(0, self.shape[0], n_rows_per_batch):
-				x[ix:ix + n_rows_per_batch] = self.wsm[self.name][ix:ix + n_rows_per_batch]
-			return x
+			return shoji.NonTransactionalView(shoji.View(self.wsm, ()))[self.name]
 		# Maybe it's a Filter?
 		if isinstance(expr, shoji.Filter):
 			return shoji.View(self.wsm, (expr,))[self.name]
