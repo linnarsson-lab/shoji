@@ -135,8 +135,11 @@ class WorkspaceManager:
 		assert isinstance(dim, shoji.Dimension), f"'{name}' is not a dimension"
 		return dim
 
-	def _tensors(self) -> List[str]:
-		return [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
+	def _tensors(self, include_not_ready: bool = False) -> List[str]:
+		names = [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
+		if include_not_ready:
+			return names
+		return [name for name in names if shoji.io.get_tensor(self._db.transaction, self, name) is not None]
 
 	def _get_tensor(self, name: str) -> shoji.Tensor:
 		tensor = self[name]
@@ -247,6 +250,7 @@ class WorkspaceManager:
 				else:
 					raise AttributeError(f"Cannot create new tensor '{name}' because it would overwrite existing entity")
 			shoji.io.create_tensor(self._db.transaction, self, name, tensor)
+			shoji.io.initialize_tensor(self, name, tensor)
 		else:
 			super().__setattr__(name, value)
 	

@@ -347,7 +347,7 @@ class Tensor:
 		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
 		if inits is None:
-			self.inits: TensorValue = None
+			self.inits: Optional[TensorValue] = None
 			self.jagged = False
 			self.shape = shape if shape is not None else (0,) * len(dims)
 		else:

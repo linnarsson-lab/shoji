@@ -89,7 +89,7 @@ class View:
 				shape.append(self.get_length(dim))
 			else:
 				shape.append(tensor.shape[i])
-		return shape
+		return tuple(shape)
 
 	def _read_chunk(self, tensor: shoji.Tensor, start: int, end: int) -> np.ndarray:
 		if tensor.rank > 0 and tensor.dims[0] in self.filters:

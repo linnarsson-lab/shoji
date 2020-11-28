@@ -3,6 +3,7 @@ Internal low-level I/O routines, not intended for end users.
 """
 
 from typing import Union, Optional, Tuple, Dict, List, Type
+from enum import IntFlag
 import fdb
 import numpy as np
 import blosc
@@ -12,12 +13,14 @@ import copy
 CHUNK_SIZE = 1_000
 
 
+class TensorFlags(IntFlag):
+	Empty = 0
+	Jagged = 1
+	Initializing = 2  # Set if the tensor is not yet fully initialized
+
+
 @fdb.transactional
 def get_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str) -> Optional[str]:
-	return get_entity_prof(tr, wsm, name)
-
-
-def get_entity_prof(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str) -> Optional[str]:
 	t = get_tensor(tr, wsm, name)
 	if t is not None:
 		return t
@@ -55,7 +58,7 @@ def get_dimension(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 
 
 @fdb.transactional
-def get_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str) -> Optional[shoji.Tensor]:
+def get_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, include_initializing: bool = False) -> Optional[shoji.Tensor]:
 	subdir = wsm._subdir
 	# ("tensors", name) = (tensor.dtype, tensor.rank, tensor.jagged) + tensor.dims + shape
 	# where shape[0] == -1 if jagged
@@ -67,7 +70,10 @@ def get_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str)
 		else:
 			shape = ()
 		tensor = shoji.Tensor(t[0], t[3:3 + t[1]], shape=shape)
-		tensor.jagged = t[2] == 1
+		flags = TensorFlags(t[2])
+		tensor.jagged = TensorFlags.Jagged in flags
+		if TensorFlags.Initializing in flags and not include_initializing:
+			return None
 		tensor.name = name
 		tensor.wsm = wsm
 		return tensor
@@ -91,7 +97,7 @@ def list_dimensions(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager) -> Li
 
 
 @fdb.transactional
-def list_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager) -> List[shoji.Tensor]:
+def list_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, include_initializing: bool = False) -> List[shoji.Tensor]:
 	result = []
 	for kv in tr[wsm._subdir["tensors"].range()]:
 		t = pickle.loads(kv.value)
@@ -100,8 +106,11 @@ def list_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager) -> List[
 		else:
 			shape = ()
 		tensor = shoji.Tensor(t[0], t[3:3 + t[1]], shape=shape)
-		tensor.jagged = t[2] == 1
+		flags = TensorFlags(t[2])
+		tensor.jagged = TensorFlags.Jagged in flags
 		tensor.name = wsm._subdir["tensors"].unpack(kv.key)[0]
+		if TensorFlags.Initializing in flags and not include_initializing:
+			continue
 		tensor.wsm = wsm
 		result.append(tensor)
 	return result
@@ -117,6 +126,7 @@ def delete_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 	elif tr[subdir["tensors"][name]].present():
 		tr.clear_range_startswith(subdir["tensors"][name].key())
 		tr.clear_range_startswith(subdir["tensor_values"][name].key())
+		tr.clear_range_startswith(subdir["tensor_indexes"][name].key())
 
 
 @fdb.transactional
@@ -132,12 +142,11 @@ def create_or_update_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: 
 		if prev_dim.shape != dim.shape:
 			if isinstance(dim.shape, int):
 				# Changing to a fixed shape, so we must check that all relevant tensors agree
-				all_tensors: List[str] = [subdir["tensors"].unpack(k)[0] for k,v in tr[subdir["tensors"].range()]]
-				for tensor_name in all_tensors:
-					tensor = get_tensor(tr, wsm, tensor_name)
+				all_tensors: List[shoji.Tensor] = list_tensors(tr, wsm)
+				for tensor in all_tensors:
 					if tensor.rank > 0 and tensor.dims[0] == name:
 						if tensor.shape[0] != dim.shape:
-							raise AttributeError(f"New shape of existing dimension '{name}' conflicts with length {tensor.shape[0]} of existing tensor '{tensor_name}'")
+							raise AttributeError(f"New shape of existing dimension '{name}' conflicts with length {tensor.shape[0]} of existing tensor '{tensor.name}'")
 				dim.length = dim.shape
 			else:
 				dim.length = prev_dim.length
@@ -146,13 +155,17 @@ def create_or_update_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: 
 
 
 @fdb.transactional
-def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -> int:
+def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -> None:
+	"""
+	Creates a new tensor (but does not write the inits)
+
+	If inits were provided, the tensor is marked as Initializing, and will be invisible until the inits have been written
+	"""
 	subdir = wsm._subdir
 	# Check that name doesn't already exist
 	existing = get_entity(tr, wsm, name)
 	if existing is not None:
-		if not isinstance(existing, shoji.Tensor):
-			raise AttributeError(f"Name already exists (as {existing})")
+		raise AttributeError(f"Name already exists (as {existing})")
 	else:
 		# Check that the dimensions of the tensor exist
 		for ix, d in enumerate(tensor.dims):
@@ -180,20 +193,85 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 						raise IndexError(f"Mismatch between the declared shape {dim.shape} of dimension '{d}' and the shape {tensor.shape} of values")
 	key = subdir.pack(("tensors", name))
 	tensor.shape = (0,) + tensor.shape[1:]  # The first dimension will be updated by write_tensor_values after values have been actually appended
-	data = pickle.dumps((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape)
-	tr[key] = data
+	flags = TensorFlags.Empty
+	if tensor.jagged:
+		flags |= TensorFlags.Jagged
 	if tensor.inits is not None:
-		write_tensor_values(tr, wsm, name, tensor.inits, tensor=tensor)
+		flags |= TensorFlags.Initializing
+	data = pickle.dumps((tensor.dtype, tensor.rank, int(flags)) + tensor.dims + tensor.shape)
+	tr[key] = data
+
+
+def initialize_tensor(wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor):
+	if tensor.inits is not None:
+		if tensor.rank == 0:
+			write_tensor_values(wsm._db.transaction, wsm, name, tv=tensor.inits, tensor=tensor)
+		else:
+			n_rows = len(tensor.inits)
+			n_bytes = tensor.inits.size_in_bytes()
+
+			if isinstance(tensor.dims[0], str):
+				dim = wsm._get_dimension(tensor.dims[0])
+				if dim.length != 0 and dim.length != len(tensor.inits):
+					raise ValueError(f"Length {len(tensor.inits)} of new tensor '{name}' does not match length {dim.length} of first dimension '{tensor.dims[0]}' ")
+
+			n_bytes_per_transaction = 1_000_000  # Starting point, but we'll adapt it below
+			ix: int = 0
+			while ix < n_rows:
+				n_rows_per_transaction = int(max(1, n_rows / (n_bytes / n_bytes_per_transaction)))
+				batch = tensor.inits.values[ix: ix + n_rows_per_transaction]
+				try:
+					tensor.shape = (ix,) + tensor.inits.shape[1:]
+					n_bytes_written = write_tensor_values(wsm._db.transaction, wsm, name, tv=shoji.TensorValue(batch), tensor=tensor, initializing=True)
+				except fdb.impl.FDBError as e:
+					if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
+						n_bytes_per_transaction = max(1, n_bytes_per_transaction // 2)
+						continue
+					else:
+						raise e
+				if n_bytes_written < n_bytes_per_transaction // 2:  # Not enough bytes, so increase for next round
+					n_bytes_per_transaction *= 2
+				ix += n_rows_per_transaction
+		# Complete the intitalization in one atomic operation
+		finish_initialization(wsm._db.transaction, wsm, name, tensor)
 
 
 @fdb.transactional
-def update_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -> int:
+def finish_initialization(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -> None:
+	assert tensor.inits is not None
+	# Update the tensor definition to clear the Initializing flag
+	subdir = wsm._subdir
+	key = subdir.pack(("tensors", name))
+	flags = TensorFlags.Empty
+	if tensor.jagged:
+		flags |= TensorFlags.Jagged
+	data = pickle.dumps((tensor.dtype, tensor.rank, int(flags)) + tensor.dims + tensor.inits.shape)
+	wsm._db.transaction[key] = data
+
+	# Update the first dimension
+	if tensor.rank > 0 and isinstance(tensor.dims[0], str):
+		dim = wsm._get_dimension(tensor.dims[0])
+		# Redo this test here, since dimension might have changed while we were writing the inits
+		if dim.length != 0 and dim.length != len(tensor.inits):
+			raise ValueError(f"Length {len(tensor.inits)} of new tensor '{name}' does not match length {dim.length} of first dimension '{tensor.dims[0]}' ")
+		if dim.length == 0:
+			dim.length = len(tensor.inits)
+			create_or_update_dimension(tr, wsm, tensor.dims[0], dim)
+
+
+@fdb.transactional
+def update_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor, initializing: bool = False) -> int:
 	# Store tensor definition (overwriting any existing definition)
 	# ("tensors", name) = (dtype, rank, jagged) + dims + shape  
 	# where shape[0] == -1 if jagged, and tuple value is encoded using pickle
 	subdir = wsm._subdir
 	key = subdir.pack(("tensors", name))
-	data = pickle.dumps((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape)
+	flags = TensorFlags.Empty
+	if tensor.jagged:
+		flags |= TensorFlags.Jagged
+	if initializing:
+		flags |= TensorFlags.Initializing
+	data = pickle.dumps((tensor.dtype, tensor.rank, int(flags)) + tensor.dims + tensor.shape)
 	tr[key] = data
 
 	return len(key) + len(data)
@@ -213,13 +291,13 @@ def dtype_class(dtype) -> Union[Type[int], Type[float], Type[bool], Type[str]]:
 
 
 @fdb.transactional
-def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tv: shoji.TensorValue, indices: np.ndarray = None, tensor: shoji.Tensor = None) -> int:
+def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tv: shoji.TensorValue, indices: np.ndarray = None, tensor: shoji.Tensor = None, initializing: bool = False) -> int:
 	"""
 	Args:
 		tr          Transaction
 		wsm         WorkspaceManager
 		name        Name of the tensor in the database
-		tv      	Tensor values tow write
+		tv      	Tensor values to write
 		indices     A vector of row indices where the inits should be written, or None to append at end of tensor
 	"""
 	n_bytes_written = 0
@@ -235,7 +313,7 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 		n_bytes_written += len(encoded) + len(key)
 		return n_bytes_written
 		
-	is_update = True  
+	is_update = True
 	if indices is None:  # We're appending to the end of the tensor
 		is_update = False
 		new_length = len(tv) + tensor.shape[0]
@@ -246,12 +324,13 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 			new_tensor.shape = tv.shape
 		else:
 			new_tensor.shape = (new_length,) + tensor.shape[1:]
-		n_bytes_written += update_tensor(tr, wsm, name, new_tensor)
+		n_bytes_written += update_tensor(tr, wsm, name, new_tensor, initializing=initializing)
 
 	# Update the index
 	tc = dtype_class(tensor.dtype)
 	if tensor.rank == 1:
 		if is_update:
+			# Delete the old index keys
 			old_vals = read_tensor_values(tr, wsm, name, tensor, indices)
 			for i, ix in enumerate(indices):
 				key = subdir.pack(("tensor_indexes", name, tc(old_vals[i]), int(ix)))
@@ -411,16 +490,23 @@ def const_compare(tr, wsm: shoji.WorkspaceManager, name: str, operator: str, con
 	eq_range = index[const].range()
 	all_range = index.range()
 	start, stop = all_range.start, all_range.stop
+	if operator == "!=":
+		stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+		a = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
+		start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+		stop = all_range.stop
+		b = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
+		return np.concatenate([a, b])
 	if operator == "==":
 		start, stop = eq_range.start, eq_range.stop
-	if operator == ">=":
+	elif operator == ">=":
 		start = eq_range.start
 	elif operator == ">":
-		start = tr.get_key(fdb.KeySelector.first_greater_than(index[const]))
+		start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
 	elif operator == "<=":
 		stop = eq_range.stop
 	elif operator == "<":
-		stop = tr.get_key(fdb.KeySelector.last_less_than(index[const]))
+		stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
 	return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
 
 
