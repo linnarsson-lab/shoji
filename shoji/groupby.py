@@ -18,6 +18,7 @@ class Accumulator:
 		self._m2 = None
 		self._m3 = None
 		self._m4 = None
+		self._first = None
 
 	def add(self, x):
 		if self._count is None:
@@ -31,6 +32,7 @@ class Accumulator:
 			self._m2 = np.zeros_like(self._mean)
 			self._m3 = np.zeros_like(self._mean)
 			self._m4 = np.zeros_like(self._mean)
+			self._first = x
 		else:
 			self._nnz[x > 0] += 1
 			self._sum += x
@@ -46,6 +48,10 @@ class Accumulator:
 			self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
 			self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
 			self._m2 = self._m2 + term
+
+	@property
+	def first(self):
+		return self._first
 
 	@property
 	def count(self):
@@ -105,6 +111,12 @@ class GroupAccumulator:
 			x = {label: x.count for label, x in self.groups.items()}
 			return np.array(list(x.keys())), np.array(list(x.values()))
 		return self.groups[label].count
+
+	def first(self, label = None) -> np.ndarray:
+		if label is None:
+			x = {label: x.first for label, x in self.groups.items()}
+			return np.array(list(x.keys())), np.array(list(x.values()))
+		return self.groups[label].first
 
 	def mean(self, label = None) -> np.ndarray:
 		if label is None:
@@ -177,6 +189,9 @@ class GroupViewBy:
 
 	def count(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).count()
+
+	def first(self, of_tensor: str) -> np.ndarray:
+		return self.stats(of_tensor).first()
 
 	def nnz(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).nnz()
