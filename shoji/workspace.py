@@ -84,6 +84,7 @@ import numpy as np
 import logging
 import loompy
 import shoji
+import shoji.io
 import h5py
 
 
@@ -152,14 +153,12 @@ class WorkspaceManager:
 		return self._subdir.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
 	def __iter__(self):
-		for s in self._subdir.list(self._db.transaction):
-			yield self[s]
-		dimensions = [self._subdir["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["dimensions"].range()]]
-		for d in dimensions:
-			yield self[d]
-		tensors = [self._subdir["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["tensors"].range()]]
-		for t in tensors:
-			yield self[t]
+		for w in shoji.io.list_workspaces(self._db.transaction, self):
+			yield w
+		for t in shoji.io.list_tensors(self._db.transaction, self):
+			yield t
+		for d in shoji.io.list_dimensions(self._db.transaction, self):
+			yield d
 
 	def __contains__(self, name: str) -> bool:
 		entity = shoji.io.get_entity(self._db.transaction, self, name)
@@ -231,19 +230,13 @@ class WorkspaceManager:
 			# Check that the first letter is lowercase
 			if not name[0].islower():
 				raise AttributeError("Dimension name must begin with a lowercase letter")
-			shoji.io.create_or_update_dimension(self._db.transaction, self, name, value)
+			shoji.io.create_dimension(self._db.transaction, self, name, value)
 		elif isinstance(value, shoji.Tensor):
 			tensor = value
 			# Check that the first letter is uppercase
 			if not name[0].isupper():
 				raise AttributeError("Tensor name must begin with an uppercase letter")
 
-			# Note, this can fail as follows:
-			#  * Before anything has been written
-			#  * After the tensor has been full created but no values have been written
-			#  * After one or more rows have been fully written (consistent with other tensors in the dimension)
-			#  * After all rows have been fully written
-			# In each case, the database state will be consistent
 			if name in self:
 				if isinstance(self[name], shoji.Tensor):
 					del self[name]

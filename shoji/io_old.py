@@ -22,7 +22,7 @@ class TensorFlags(IntFlag):
 
 
 @fdb.transactional
-def get_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str) -> Optional[str]:
+def get_entity(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str) -> Optional[Union[shoji.Dimension, shoji.Tensor, shoji.WorkspaceManager]]:
 	t = get_tensor(tr, wsm, name)
 	if t is not None:
 		return t
@@ -72,7 +72,8 @@ def get_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str,
 			shape = t[3 + rank: 3 + 2 * rank]
 		else:
 			shape = ()
-		tensor = shoji.Tensor(t[0], t[3:3 + rank], shape=shape)
+		tensor = shoji.Tensor(t[0], t[3:3 + rank])
+		tensor.shape = shape
 		flags = TensorFlags(t[2])
 		tensor.jagged = TensorFlags.Jagged in flags
 		if TensorFlags.Initializing in flags and not include_initializing:
@@ -109,7 +110,8 @@ def list_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, include_
 			shape = t[3 + rank: 3 + 2 * rank]
 		else:
 			shape = ()
-		tensor = shoji.Tensor(t[0], t[3:3 + rank], shape=shape)
+		tensor = shoji.Tensor(t[0], t[3:3 + rank])
+		tensor.shape = shape
 		flags = TensorFlags(t[2])
 		tensor.jagged = TensorFlags.Jagged in flags
 		tensor.name = wsm._subdir["tensors"].unpack(kv.key)[0]
@@ -264,7 +266,7 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager,
 			raise ValueError(f"Length {len(tensor.inits)} of new tensor '{name}' does not match length {dim.length} of first dimension '{tensor.dims[0]}' ")
 		if dim.length == 0:
 			dim.length = len(tensor.inits)
-			create_or_update_dimension(tr, wsm, tensor.dims[0], dim)
+			create_dimension(tr, wsm, tensor.dims[0], dim)
 
 
 @fdb.transactional
@@ -613,7 +615,7 @@ def append_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, dname:
 	# Update the first dimension
 	dim = all_dims[dname]
 	dim.length = dim.length + len(values)
-	create_or_update_dimension(tr, wsm, dname, dim)
+	create_dimension(tr, wsm, dname, dim)
 
 	return n_bytes_written
 

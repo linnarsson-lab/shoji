@@ -309,13 +309,14 @@ class TensorValue:
 class Tensor:
 	valid_types = ("bool", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "string")
 
-	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, chunked: bool = False, chunks: Union[Literal["auto"], Tuple[int, ...]] = None, *, shape: Tuple[int, ...] = None) -> None:
+	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, chunks: Union[Literal["auto"], Tuple[int, ...]] = None, compressed: bool = True) -> None:
 		"""
 		Args:
 			dtype:	string giving the datatype of the tensor elements
 			dims:	A tuple of None, int, string (empty tuple designates a scalar)
 			inits:	Optional values to initialize the tensor with
 			chunks: Tuple defining the chunk size along each dimension, or "auto" to use automatic chunking, or None to use old-style automatic chunking
+			compressed: If true use compression
 
 		Remarks:
 			Dimensions are specified as:
@@ -329,29 +330,20 @@ class Tensor:
 			Chunking has no effect for rank-0 tensors
 		"""
 		self.dtype = dtype
-		self.bytewidth = -1  # string dtype doesn't have a fixed bytewidth
-		if dtype in ("bool", "uint8", "int8"):
-			self.bytewidth = 1
-		elif dtype in ("uint16", "int16", "float16"):
-			self.bytewidth = 2
-		elif dtype in ("uint32", "int32", "float32"):
-			self.bytewidth = 3
-		elif dtype in ("uint64", "int64", "float64"):
-			self.bytewidth = 4
 		
 		# Check that the type is valid
 		if dtype not in Tensor.valid_types:
 			raise TypeError(f"Invalid Tensor type {dtype}")
 
 		self.dims = dims
-	
+
 		self.name = ""  # Will be set if the Tensor is read from the db
 		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
 		if inits is None:
 			self.inits: Optional[TensorValue] = None
 			self.jagged = False
-			self.shape = shape if shape is not None else (0,) * len(dims)
+			self.shape = (0,) * len(dims)
 		else:
 			# If scalar, convert to an ndarray scalar which will have shape ()
 			if np.isscalar(inits):
@@ -375,7 +367,6 @@ class Tensor:
 				if self.shape[ix] != dim:  # type: ignore
 					raise IndexError(f"Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values")
 
-		self.rank = len(self.dims)
 		if chunks == "auto":
 			if self.rank == 1:
 				self.chunks: Optional[Tuple[int, ...]] = (1000,)
@@ -385,52 +376,51 @@ class Tensor:
 				self.chunks = (1, 10, 100) + (1,) * (self.rank - 3)
 		else:
 			self.chunks = chunks
-		self.chunked = chunked
+		self.compressed = compressed
+		self.initializing = False
 
 	# Support pickling
 	def __getstate__(self):
 		"""Return state values to be pickled."""
-		return (self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks)
+		return (self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks, self.compressed, self.initializing)
 
 	def __setstate__(self, state):
 		"""Restore state from the unpickled state values."""
-		self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks
+		self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks, self.compressed, self.initializing = state
 
 	def __len__(self) -> int:
 		if self.rank > 0:
 			return self.shape[0]
 		return 0
 
-	def __getitem__(self, expr: Union["shoji.Filter", tuple, slice, int, Any]) -> np.ndarray:  # We have to include Any here to support ellipsis, which is untypable in mypy
+	@property
+	def rank(self) -> int:
+		return len(self.dims)
+
+	@property
+	def bytewidth(self) -> int:
+		if self.dtype in ("bool", "uint8", "int8"):
+			return 1
+		elif self.dtype in ("uint16", "int16", "float16"):
+			return 2
+		elif self.dtype in ("uint32", "int32", "float32"):
+			return 3
+		elif self.dtype in ("uint64", "int64", "float64"):
+			return 4
+		return -1
+
+	def __getitem__(self, expr: Union["shoji.Filter", tuple, slice, int]) -> np.ndarray:
 		assert self.wsm is not None, "Tensor is not bound to a database"
-		# Is it an ellipsis? Read the tensor non-transactionally in batches
-		if expr == ...:
-			return shoji.NonTransactionalView(shoji.View(self.wsm, ()))[self.name]
-		non_transactional = False
-		if isinstance(expr, tuple) and expr[-1] == ...:
-			expr = expr[:-1]
-			if len(expr) == 1 and isinstance(expr[0], slice):
-				expr = expr[0]
-			non_transactional = True
 
 		# Maybe it's a Filter?
 		if isinstance(expr, shoji.Filter):
-			if non_transactional:
-				return shoji.View(self.wsm, (expr,))[...][self.name]
-			else:
-				return shoji.View(self.wsm, (expr,))[self.name]
+			return shoji.View(self.wsm, (expr,))[self.name]
 
 		# Or a slice?
 		if isinstance(expr, slice):
 			if expr.start is None and expr.stop is None:
-				if non_transactional:
-					return shoji.View(self.wsm, ())[...][self.name]
-				else:
-					return shoji.View(self.wsm, ())[self.name]
-			if non_transactional:
-				return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[...][self.name]
-			else:
-				return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
+				return shoji.View(self.wsm, ())[self.name]
+			return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
 
 		if isinstance(expr, (list, tuple, int, np.int64, np.int32)):
 			expr = np.array(expr)
@@ -441,10 +431,7 @@ class Tensor:
 				view = shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
 			else:
 				raise KeyError()
-			if non_transactional:
-				return view[...][self.name]
-			else:
-				return view[self.name]
+			return view[self.name]
 		raise KeyError(expr)
 
 	def __setitem__(self, expr: Union["shoji.Filter", tuple, slice, int], vals: np.ndarray) -> None:
@@ -524,23 +511,9 @@ class Tensor:
 		
 		if self.rank == 0:
 			raise ValueError("Cannot append to a scalar")
-		if isinstance(self.dims[0], str):
-			if self.wsm is not None:
-				d = self.wsm[self.dims[0]]
-				if isinstance(d, shoji.Dimension):
-					d.append(vals)
-					return
-			raise ValueError(f"Failed to append along named first dimension {self.dims[0]}")
 
 		tv = TensorValue(vals)
-		n_bytes = tv.size_in_bytes()
-		n_batches = max(1, n_bytes // 5_000_000) # Should be plenty, given that we'll also be compressing the rows when writing
-		n_rows_per_transaction = max(1, len(vals) // n_batches)
-		ix: int = 0
-		while ix < len(vals):
-			batch = {self.name: vals[ix: ix + n_rows_per_transaction]}
-			shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
-			ix += n_rows_per_transaction
+		shoji.io.append_values_multibatch(self.wsm, [self.name], [tv], (0,))
 
 	def _quick_look(self) -> str:
 		if self.rank == 0:

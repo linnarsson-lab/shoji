@@ -178,21 +178,12 @@ class GroupViewBy:
 		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
 		acc = GroupAccumulator()
 
-		n_rows_per_transaction = 1000  # Starting point, but we'll adapt it below
-		ix: int = 0
-		while ix < n_rows:
-			try:
-				chunk = self.view._read_chunk(tensor, ix, ix + n_rows_per_transaction)
-				chunk_labels = labels[ix: ix + n_rows_per_transaction]
-				for i, label in enumerate(chunk_labels):
-					acc.add(le.classes_[label], chunk[i])
-			except fdb.impl.FDBError as e:
-				if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
-					n_rows_per_transaction = max(1, n_rows_per_transaction // 2)
-					continue
-				else:
-					raise e
-			ix += n_rows_per_transaction
+		n_rows_per_batch = 1000
+		for ix in range(0, n_rows, n_rows_per_batch):
+			chunk = self.view._read_chunk(tensor, ix, ix + n_rows_per_batch)
+			chunk_labels = labels[ix: ix + n_rows_per_batch]
+			for i, label in enumerate(chunk_labels):
+				acc.add(le.classes_[label], chunk[i])
 		return acc
 
 	def sum(self, of_tensor: str) -> np.ndarray:
@@ -252,21 +243,12 @@ class GroupDimensionBy:
 		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
 		acc = GroupAccumulator()
 		n_rows = self.dim.length
-		n_rows_per_transaction = 1000  # Starting point, but we'll adapt it below
-		ix: int = 0
-		while ix < n_rows:
-			try:
-				chunk = self.dim.wsm[of_tensor][ix: ix + n_rows_per_transaction]
-				chunk_labels = labels[ix: ix + n_rows_per_transaction]
-				for i, label in enumerate(chunk_labels):
-					acc.add(le.classes_[label], chunk[i])
-			except fdb.impl.FDBError as e:
-				if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
-					n_rows_per_transaction = max(1, n_rows_per_transaction // 2)
-					continue
-				else:
-					raise e
-			ix += n_rows_per_transaction
+		n_rows_per_batch = 1000
+		for ix in range(0, n_rows, n_rows_per_batch):
+			batch = self.dim.wsm._get_tensor(of_tensor)[ix: ix + n_rows_per_batch]
+			batch_labels = labels[ix: ix + n_rows_per_batch]
+			for i, label in enumerate(batch_labels):
+				acc.add(le.classes_[label], batch[i])
 		return acc
 
 

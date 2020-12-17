@@ -66,6 +66,15 @@ class Dimension:
 		self.name = ""  # Will be set if the Dimension is read from the db
 		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
 
+	# Support pickling
+	def __getstate__(self):
+		"""Return state values to be pickled."""
+		return (self.shape, self.length)
+
+	def __setstate__(self, state):
+		"""Restore state from the unpickled state values."""
+		self.shape, self.length = state
+
 	def __getitem__(self, key) -> "shoji.View":
 		if self.wsm is None:
 			raise ValueError("Cannot filter unbound dimension")

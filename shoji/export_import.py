@@ -25,7 +25,7 @@ def _import(f: str, ws: shoji.WorkspaceManager, recursive: bool = False, group_n
 			if isinstance(subgroup, h5py.Group):
 				name = subgroup.name.split("/")[-1]
 				if name.startswith("Dimension$"):
-					shape, length = 
+					shape, length = ...
 					ws[name.split("$")[-1]] = shoji.Dimension()
 
 	# To be continued...
