@@ -232,15 +232,15 @@ limits the total size of the row of a tensor. If all the data for a single row c
 be retrieved in less than five seconds, you will have to redesign the data model (e.g. 
 breaking out some dimensions to a separate tensor).
 """
-from typing import Tuple, Union, List, Optional, Callable, Any
+from typing import Tuple, Union, List, Optional, Callable, Any, Literal
 import numpy as np
+import logging
 import shoji
 
 
 class TensorValue:
 	def __init__(self, values: Union[Tuple[np.ndarray], List[np.ndarray], np.ndarray]) -> None:
 		self.values = values
-
 		if isinstance(values, (list, tuple)):
 			self.jagged = True
 			self.rank = values[0].ndim + 1
@@ -278,7 +278,6 @@ class TensorValue:
 		if self.dtype not in Tensor.valid_types:
 			raise TypeError(f"Invalid dtype '{self.dtype}' for tensor value")
 
-
 	@property
 	def size(self) -> int:
 		return np.prod(self.shape)
@@ -310,12 +309,13 @@ class TensorValue:
 class Tensor:
 	valid_types = ("bool", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "string")
 
-	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, shape: Tuple[int, ...] = None) -> None:
+	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, chunked: bool = False, chunks: Union[Literal["auto"], Tuple[int, ...]] = None, *, shape: Tuple[int, ...] = None) -> None:
 		"""
 		Args:
 			dtype:	string giving the datatype of the tensor elements
 			dims:	A tuple of None, int, string (empty tuple designates a scalar)
 			inits:	Optional values to initialize the tensor with
+			chunks: Tuple defining the chunk size along each dimension, or "auto" to use automatic chunking, or None to use old-style automatic chunking
 
 		Remarks:
 			Dimensions are specified as:
@@ -325,6 +325,8 @@ class Tensor:
 				string:		named dimension
 			
 			The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
+
+			Chunking has no effect for rank-0 tensors
 		"""
 		self.dtype = dtype
 		self.bytewidth = -1  # string dtype doesn't have a fixed bytewidth
@@ -374,6 +376,25 @@ class Tensor:
 					raise IndexError(f"Mismatch between the declared shape {dim} of dimension {ix} and the inferred shape {self.shape} of values")
 
 		self.rank = len(self.dims)
+		if chunks == "auto":
+			if self.rank == 1:
+				self.chunks: Optional[Tuple[int, ...]] = (1000,)
+			elif self.rank == 2:
+				self.chunks = (10, 100)
+			elif self.rank > 2:
+				self.chunks = (1, 10, 100) + (1,) * (self.rank - 3)
+		else:
+			self.chunks = chunks
+		self.chunked = chunked
+
+	# Support pickling
+	def __getstate__(self):
+		"""Return state values to be pickled."""
+		return (self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks)
+
+	def __setstate__(self, state):
+		"""Restore state from the unpickled state values."""
+		self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks
 
 	def __len__(self) -> int:
 		if self.rank > 0:
@@ -385,21 +406,45 @@ class Tensor:
 		# Is it an ellipsis? Read the tensor non-transactionally in batches
 		if expr == ...:
 			return shoji.NonTransactionalView(shoji.View(self.wsm, ()))[self.name]
+		non_transactional = False
+		if isinstance(expr, tuple) and expr[-1] == ...:
+			expr = expr[:-1]
+			if len(expr) == 1 and isinstance(expr[0], slice):
+				expr = expr[0]
+			non_transactional = True
+
 		# Maybe it's a Filter?
 		if isinstance(expr, shoji.Filter):
-			return shoji.View(self.wsm, (expr,))[self.name]
+			if non_transactional:
+				return shoji.View(self.wsm, (expr,))[...][self.name]
+			else:
+				return shoji.View(self.wsm, (expr,))[self.name]
+
 		# Or a slice?
 		if isinstance(expr, slice):
 			if expr.start is None and expr.stop is None:
-				return shoji.View(self.wsm, ())[self.name]
-			return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
+				if non_transactional:
+					return shoji.View(self.wsm, ())[...][self.name]
+				else:
+					return shoji.View(self.wsm, ())[self.name]
+			if non_transactional:
+				return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[...][self.name]
+			else:
+				return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
+
 		if isinstance(expr, (list, tuple, int, np.int64, np.int32)):
 			expr = np.array(expr)
 		if isinstance(expr, np.ndarray):
 			if np.issubdtype(expr.dtype, np.bool_):
-				return shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name]
+				view = shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))
 			elif np.issubdtype(expr.dtype, np.int_):
-				return shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+				view = shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+			else:
+				raise KeyError()
+			if non_transactional:
+				return view[...][self.name]
+			else:
+				return view[self.name]
 		raise KeyError(expr)
 
 	def __setitem__(self, expr: Union["shoji.Filter", tuple, slice, int], vals: np.ndarray) -> None:

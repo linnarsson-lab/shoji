@@ -2,6 +2,7 @@ from typing import Dict, Union, Callable, Tuple, Optional
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 import shoji
+import fdb
 
 
 # Based on https://github.com/mahmoud/lithoxyl/blob/master/lithoxyl/moment.py
@@ -23,8 +24,8 @@ class Accumulator:
 	def add(self, x):
 		if self._count is None:
 			self._sum = x.astype("float64")
-			self._count = np.ones_like(self._sum)
-			self._nnz = np.zeros_like(self._sum)
+			self._count = np.ones_like(self._sum, dtype="uint64")
+			self._nnz = np.zeros_like(self._sum, dtype="uint64")
 			self._nnz[x > 0] += 1
 			self._min = x.astype("float64")
 			self._max = x.astype("float64")
@@ -34,11 +35,11 @@ class Accumulator:
 			self._m4 = np.zeros_like(self._mean)
 			self._first = x
 		else:
-			self._nnz[x > 0] += 1
+			self._nnz[x > 0] = np.add(self._nnz[x > 0], 1, casting="unsafe")  # This convoluted scheme is needed to avoid error when adding 1 to a scalar array
 			self._sum += x
 			self._min = np.minimum(self._min, x)
 			self._max = np.maximum(self._min, x)
-			self._count += 1
+			np.add(self._count, 1, out=self._count, casting="unsafe")  # Same issue as above, but at least here we can do it in-place
 			n = self._count
 			delta = x - self._mean
 			delta_n = delta / n
@@ -150,14 +151,13 @@ class GroupAccumulator:
 
 
 class GroupViewBy:
-	def __init__(self, view: "shoji.view.View", labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -> None:
+	def __init__(self, view: "shoji.view.View", labels: Optional[Union[str, np.ndarray]], projection: Callable = None) -> None:
 		self.view = view
 		self.labels = labels
 		if isinstance(self.labels, str):
 			tensor = view.wsm._get_tensor(self.labels)
 			if tensor.rank != 1:
 				raise ValueError(f"Cannot groupby('{self.labels}'); a rank-1 tensor is required")
-		self.chunk_size = chunk_size
 		self.projection = projection
 		self.acc: Optional[GroupAccumulator] = None
 
@@ -177,11 +177,22 @@ class GroupViewBy:
 		le = LabelEncoder()
 		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
 		acc = GroupAccumulator()
-		for ix in range(0, n_rows, self.chunk_size):
-			chunk = self.view._read_chunk(tensor, ix, ix + self.chunk_size)
-			chunk_labels = labels[ix: ix + self.chunk_size]
-			for i, label in enumerate(chunk_labels):
-				acc.add(le.classes_[label], chunk[i])
+
+		n_rows_per_transaction = 1000  # Starting point, but we'll adapt it below
+		ix: int = 0
+		while ix < n_rows:
+			try:
+				chunk = self.view._read_chunk(tensor, ix, ix + n_rows_per_transaction)
+				chunk_labels = labels[ix: ix + n_rows_per_transaction]
+				for i, label in enumerate(chunk_labels):
+					acc.add(le.classes_[label], chunk[i])
+			except fdb.impl.FDBError as e:
+				if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
+					n_rows_per_transaction = max(1, n_rows_per_transaction // 2)
+					continue
+				else:
+					raise e
+			ix += n_rows_per_transaction
 		return acc
 
 	def sum(self, of_tensor: str) -> np.ndarray:
@@ -240,12 +251,24 @@ class GroupDimensionBy:
 			label_values = [self.projection(x) for x in  label_values]
 		labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
 		acc = GroupAccumulator()
-		for ix in range(0, self.dim.length, self.chunk_size):
-			chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
-			chunk_labels = labels[ix: ix + self.chunk_size]
-			for i, label in enumerate(chunk_labels):
-				acc.add(le.classes_[label], chunk[i])
+		n_rows = self.dim.length
+		n_rows_per_transaction = 1000  # Starting point, but we'll adapt it below
+		ix: int = 0
+		while ix < n_rows:
+			try:
+				chunk = self.dim.wsm[of_tensor][ix: ix + n_rows_per_transaction]
+				chunk_labels = labels[ix: ix + n_rows_per_transaction]
+				for i, label in enumerate(chunk_labels):
+					acc.add(le.classes_[label], chunk[i])
+			except fdb.impl.FDBError as e:
+				if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
+					n_rows_per_transaction = max(1, n_rows_per_transaction // 2)
+					continue
+				else:
+					raise e
+			ix += n_rows_per_transaction
 		return acc
+
 
 	def sum(self, of_tensor: str) -> np.ndarray:
 		return self.stats(of_tensor).sum()

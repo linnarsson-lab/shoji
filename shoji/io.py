@@ -5,6 +5,7 @@ Internal low-level I/O routines, not intended for end users.
 from typing import Union, Optional, Tuple, Dict, List, Type
 from enum import IntFlag
 import fdb
+import logging
 import numpy as np
 import blosc
 import shoji
@@ -17,6 +18,7 @@ class TensorFlags(IntFlag):
 	Empty = 0
 	Jagged = 1
 	Initializing = 2  # Set if the tensor is not yet fully initialized
+	Chunked = 4  # New style of chunking for improved random-access along second dimension
 
 
 @fdb.transactional
@@ -60,16 +62,17 @@ def get_dimension(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 @fdb.transactional
 def get_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, include_initializing: bool = False) -> Optional[shoji.Tensor]:
 	subdir = wsm._subdir
-	# ("tensors", name) = (tensor.dtype, tensor.rank, tensor.jagged) + tensor.dims + shape
+	# ("tensors", name) = (tensor.dtype, tensor.rank, tensor.jagged) + tensor.dims + shape + chunks
 	# where shape[0] == -1 if jagged
 	val = tr[subdir.pack(("tensors", name))]
 	if val.present():
 		t = pickle.loads(val.value)
-		if t[1] > 0:
-			shape = t[-t[1]:]
+		rank = t[1]
+		if rank > 0:
+			shape = t[3 + rank: 3 + 2 * rank]
 		else:
 			shape = ()
-		tensor = shoji.Tensor(t[0], t[3:3 + t[1]], shape=shape)
+		tensor = shoji.Tensor(t[0], t[3:3 + rank], shape=shape)
 		flags = TensorFlags(t[2])
 		tensor.jagged = TensorFlags.Jagged in flags
 		if TensorFlags.Initializing in flags and not include_initializing:
@@ -101,11 +104,12 @@ def list_tensors(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, include_
 	result = []
 	for kv in tr[wsm._subdir["tensors"].range()]:
 		t = pickle.loads(kv.value)
-		if t[1] > 0:
-			shape = t[-t[1]:]
+		rank = t[1]
+		if rank > 0:
+			shape = t[3 + rank: 3 + 2 * rank]
 		else:
 			shape = ()
-		tensor = shoji.Tensor(t[0], t[3:3 + t[1]], shape=shape)
+		tensor = shoji.Tensor(t[0], t[3:3 + rank], shape=shape)
 		flags = TensorFlags(t[2])
 		tensor.jagged = TensorFlags.Jagged in flags
 		tensor.name = wsm._subdir["tensors"].unpack(kv.key)[0]
@@ -146,7 +150,7 @@ def create_or_update_dimension(tr, wsm: shoji.WorkspaceManager, name: str, dim: 
 				for tensor in all_tensors:
 					if tensor.rank > 0 and tensor.dims[0] == name:
 						if tensor.shape[0] != dim.shape:
-							raise AttributeError(f"New shape of existing dimension '{name}' conflicts with length {tensor.shape[0]} of existing tensor '{tensor.name}'")
+							raise AttributeError(f"New shape {dim.shape} of existing dimension '{name}' conflicts with length {tensor.shape[0]} of existing tensor '{tensor.name}'")
 				dim.length = dim.shape
 			else:
 				dim.length = prev_dim.length
@@ -198,6 +202,8 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 		flags |= TensorFlags.Jagged
 	if tensor.inits is not None:
 		flags |= TensorFlags.Initializing
+	if tensor.chunked:
+		flags |= TensorFlags.Chunked
 	data = pickle.dumps((tensor.dtype, tensor.rank, int(flags)) + tensor.dims + tensor.shape)
 	tr[key] = data
 
@@ -245,8 +251,10 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager,
 	flags = TensorFlags.Empty
 	if tensor.jagged:
 		flags |= TensorFlags.Jagged
+	if tensor.chunked:
+		flags |= TensorFlags.Chunked
 	data = pickle.dumps((tensor.dtype, tensor.rank, int(flags)) + tensor.dims + tensor.inits.shape)
-	wsm._db.transaction[key] = data
+	tr[key] = data
 
 	# Update the first dimension
 	if tensor.rank > 0 and isinstance(tensor.dims[0], str):
@@ -271,6 +279,8 @@ def update_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 		flags |= TensorFlags.Jagged
 	if initializing:
 		flags |= TensorFlags.Initializing
+	if tensor.chunked:
+		flags |= TensorFlags.Chunked
 	data = pickle.dumps((tensor.dtype, tensor.rank, int(flags)) + tensor.dims + tensor.shape)
 	tr[key] = data
 
@@ -372,111 +382,126 @@ def write_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, n
 
 	# Jagged or only one row per chunk
 	for i, ix in enumerate(indices):
-		encoded = blosc.pack_array(np.array(tv.values[i]))
-		for j in range(0, len(encoded), CHUNK_SIZE):
-			key = subdir.pack(("tensor_values", name, int(ix), j // CHUNK_SIZE))
-			n_bytes_written += len(key) + CHUNK_SIZE
-			tr[key] = encoded[j:j + CHUNK_SIZE]
+		if tensor.chunked:
+			for j in range(0, len(vals), CHUNK_SIZE):
+				encoded = blosc.pack_array(vals[j: j + CHUNK_SIZE])
+				key = subdir.pack(("tensor_values", name, int(ix), int(j // CHUNK_SIZE)))
+				n_bytes_written += len(key) + len(encoded)
+				tr[key] = encoded
+		else:
+			encoded = blosc.pack_array(np.array(tv.values[i]))
+			for j in range(0, len(encoded), CHUNK_SIZE):
+				key = subdir.pack(("tensor_values", name, int(ix), int(j // CHUNK_SIZE)))
+				n_bytes_written += len(key) + CHUNK_SIZE
+				tr[key] = encoded[j:j + CHUNK_SIZE]
 	return n_bytes_written
 
 #@numba.jit
 def compute_ranges(elements):
-    elements = np.sort(elements)
-    ranges = []
-    start = elements[0]
-    for ix in range(1, len(elements)):
-        if elements[ix] != elements[ix - 1] + 1:
-            ranges.append((start, elements[ix - 1]))
-            start = elements[ix]
-    ranges.append((start, elements[-1]))
-    return ranges
+	elements = np.sort(elements)
+	ranges = []
+	start = elements[0]
+	for ix in range(1, len(elements)):
+		if elements[ix] != elements[ix - 1] + 1:
+			ranges.append((start, elements[ix - 1]))
+			start = elements[ix]
+	ranges.append((start, elements[-1]))
+	return ranges
 
 
 @fdb.transactional
-def read_chunked_rows(tr: fdb.impl.Transaction, subdir: fdb.directory_impl.DirectorySubspace, name: str, i: int, j: int) -> List[np.ndarray]:
+def read_chunked_rows(tr: fdb.impl.Transaction, subdir: fdb.directory_impl.DirectorySubspace, name: str, i: int, j: int, chunked: bool = False, indices_2nd_axis: np.ndarray = None) -> List[np.ndarray]:
 	start = subdir.range(("tensor_values", name, i)).start
 	stop = subdir.range(("tensor_values", name, j)).stop
 	result = []
 	ix = i
-	encoded = bytearray()
-	for k, v in tr.get_range(start, stop, streaming_mode=fdb.StreamingMode.want_all):
-		row = subdir.unpack(k)[-2]
-		if row != ix:
-			result.append(blosc.unpack_array(bytes(encoded)))
-			encoded = bytearray()
-			ix = row
-		encoded += v
-	result.append(blosc.unpack_array(bytes(encoded)))
+	if chunked:
+		data: List[np.ndarray] = []
+		for k, v in tr.get_range(start, stop, streaming_mode=fdb.StreamingMode.want_all):
+			row = subdir.unpack(k)[-2]
+			if row != ix:
+				result.append(np.concatenate(data))
+				data = []
+				ix = row
+			data.append(blosc.unpack_array(v))
+
+		result.append(np.concatenate(data)[0])
+	else:
+		encoded = bytearray()
+		for k, v in tr.get_range(start, stop, streaming_mode=fdb.StreamingMode.want_all):
+			row = subdir.unpack(k)[-2]
+			if row != ix:
+				result.append(blosc.unpack_array(bytes(encoded)))
+				encoded = bytearray()
+				ix = row
+			encoded += v
+		result.append(blosc.unpack_array(bytes(encoded)))
 	return result
 
 
 @fdb.transactional
-def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor = None, indices: np.ndarray = None) -> np.ndarray:
-	try:
-		subdir = wsm._subdir
-		if tensor is None:
-			tensor = get_tensor(tr, wsm, name)
+def read_tensor_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor = None, indices: np.ndarray = None, indices_2nd_axis: np.ndarray = None) -> np.ndarray:
+	subdir = wsm._subdir
+	if tensor is None:
+		tensor = get_tensor(tr, wsm, name)
 
-		# Convert the list of indices to ranges as far as possible
-		if indices is None:
-			if tensor.rank > 0:
-				n_rows = tensor.shape[0]
-				indices = np.arange(0, n_rows)
-				ranges = [(0, n_rows)]
-			else:
-				n_rows = 1
-				indices = np.array([0], dtype="int")
-				ranges = [(0, 0)]
+	# Convert the list of indices to ranges as far as possible
+	if indices is None:
+		if tensor.rank > 0:
+			n_rows = tensor.shape[0]
+			indices = np.arange(0, n_rows)
+			ranges = [(0, n_rows)]
 		else:
-			n_rows = len(indices)
-			if n_rows == 0:
-				return np.zeros(0, dtype=tensor.numpy_dtype())
-			ranges = compute_ranges(indices)
+			n_rows = 1
+			indices = np.array([0], dtype="int")
+			ranges = [(0, 0)]
+	else:
+		n_rows = len(indices)
+		if n_rows == 0:
+			return np.zeros(0, dtype=tensor.numpy_dtype())
+		ranges = compute_ranges(indices)
 
-		if tensor.rank == 0:  # It's a scalar value
-			key = subdir.pack(("tensor_values", name) + (0, 0))
-			return blosc.unpack_array(tr[key].value).item()
+	if tensor.rank == 0:  # It's a scalar value
+		key = subdir.pack(("tensor_values", name) + (0, 0))
+		return blosc.unpack_array(tr[key].value).item()
 
-		if not tensor.jagged and np.prod(tensor.shape) == 0:
-			return np.zeros((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-		if tensor.jagged and tensor.shape[0] == 0:
-			return [np.zeros(tensor.shape[1:], dtype=tensor.numpy_dtype()) for _ in range(n_rows)]
+	if not tensor.jagged and np.prod(tensor.shape) == 0:
+		return np.zeros((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+	if tensor.jagged and tensor.shape[0] == 0:
+		return [np.zeros(tensor.shape[1:], dtype=tensor.numpy_dtype()) for _ in range(n_rows)]
 
-		if tensor.jagged:
-			resultj: List[np.ndarray] = []
-			for (start, stop) in ranges:
-				resultj += read_chunked_rows(tr, subdir, name, int(start), int(stop))
-			return resultj
-		rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
-		if rows_per_chunk == 1:
-			result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-			ix = 0
-			for (start, stop) in ranges:
-				vals = read_chunked_rows(tr, subdir, name, int(start), int(stop))
-				result[ix: ix + len(vals)] = vals
-				ix += len(vals)
-			return result
-		else:  # A dense array (not jagged or scalar) with more than one row per chunk
-			chunks = indices // rows_per_chunk
-			result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
-			i = 0
-			# Use parallelism with futures
-			r = {}
-			unique_chunks = np.unique(chunks)
-			for chunk in unique_chunks:
-				key = subdir.pack(("tensor_values", name, int(chunk), 0))
-				r[chunk] = tr[key]  # This returns a Future
-			for chunk in unique_chunks:
-				vals = blosc.unpack_array(r[chunk].value)  # This blocks reading the Future
-				ixs = indices[chunks == chunk]
-				vals = vals[np.mod(ixs, rows_per_chunk)]  # Extract the relevant rows from the chunk
-				result[i: i + len(vals)] = vals
-				i += len(vals)
-			return result
-	except fdb.FDBError as e:
-		if e.code == 1007:
-			raise IOError("Transaction took too long; try reading fewer rows at a time")
-		raise e
+	if tensor.jagged:
+		resultj: List[np.ndarray] = []
+		for (start, stop) in ranges:
+			resultj += read_chunked_rows(tr, subdir, name, int(start), int(stop), tensor.chunked)
+		return resultj
+	rows_per_chunk = max(1, int(np.floor(CHUNK_SIZE / (np.prod(tensor.shape) // tensor.shape[0]))))
+	if rows_per_chunk == 1:
+		result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+		ix = 0
+		for (start, stop) in ranges:
+			vals = read_chunked_rows(tr, subdir, name, int(start), int(stop), tensor.chunked, indices_2nd_axis)
+			result[ix: ix + len(vals)] = vals
+			ix += len(vals)
+		return result
+	else:  # A dense array (not jagged or scalar) with more than one row per chunk
+		chunks = indices // rows_per_chunk
+		result = np.empty((n_rows,) + tensor.shape[1:], dtype=tensor.numpy_dtype())
+		i = 0
+		# Use parallelism with futures
+		r = {}
+		unique_chunks = np.unique(chunks)
+		for chunk in unique_chunks:
+			key = subdir.pack(("tensor_values", name, int(chunk), 0))
+			r[chunk] = tr[key]  # This returns a Future
+		for chunk in unique_chunks:
+			vals = blosc.unpack_array(r[chunk].value)  # This blocks reading the Future
+			ixs = indices[chunks == chunk]
+			vals = vals[np.mod(ixs, rows_per_chunk)]  # Extract the relevant rows from the chunk
+			result[i: i + len(vals)] = vals
+			i += len(vals)
+		return result
+
 
 @fdb.transactional
 def const_compare(tr, wsm: shoji.WorkspaceManager, name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
