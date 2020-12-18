@@ -309,7 +309,7 @@ class TensorValue:
 class Tensor:
 	valid_types = ("bool", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "string")
 
-	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, chunks: Union[Literal["auto"], Tuple[int, ...]] = None, compressed: bool = True) -> None:
+	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, chunks: Union[Literal["auto"], Tuple[int, ...]] = "auto", compressed: bool = True) -> None:
 		"""
 		Args:
 			dtype:	string giving the datatype of the tensor elements
@@ -369,7 +369,7 @@ class Tensor:
 
 		if chunks == "auto":
 			if self.rank == 1:
-				self.chunks: Optional[Tuple[int, ...]] = (1000,)
+				self.chunks: Tuple[int, ...] = (1000,)
 			elif self.rank == 2:
 				self.chunks = (10, 100)
 			elif self.rank > 2:

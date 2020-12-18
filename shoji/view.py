@@ -68,6 +68,20 @@ class View:
 				shape.append(tensor.shape[i])
 		return tuple(shape)
 
+	def _read_chunk(self, tensor: shoji.Tensor, start: int, end: int) -> np.ndarray:
+		indices = []
+		for i, dim in enumerate(tensor.dims):
+			if dim in self.filters:
+				indices = self.filters[dim].get_rows(self.wsm)
+			else:
+				indices = np.arange(tensor.shape[i])
+			if i == 0:
+				indices[-1] = indices[-1][start:end]
+
+		# Read the tensor (selected rows)
+		result = shoji.io.read_at_indices(self.wsm, tensor.name, indices, tensor.chunks, tensor.compressed, False)
+		return result
+
 	def __getattr__(self, name: str) -> np.ndarray:
 		tensor = self.wsm[name]
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"

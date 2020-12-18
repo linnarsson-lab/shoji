@@ -146,9 +146,8 @@ def read_at_indices(wsm: shoji.WorkspaceManager, tensor: str, indices: List[np.n
 	Read values corresponding to indices along each dimension (row indices, column indices, ...), automatically managing chunks as needed
 
 	Args:
-		tr: Transaction object
-		subspace: The fdb DirectorySubspace under which the chunks are stored
-		key_prefix: The tuple to use as prefix when storing the chunks
+		wsm: workspace 
+		tensr: name of the tensor
 		indices: A list of numpy arrays giving the indices of the desired chunks
 		chunk_sizes: A tuple of ints giving the size of chunks in each dimension
 		compression: If true, decompress chunks when reading
