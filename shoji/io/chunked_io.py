@@ -1,9 +1,7 @@
-from typing import List, Tuple, Any, Union, Optional, Type
+from typing import List, Tuple, Any, Union
 import numpy as np
 import fdb
 import blosc
-import shoji
-import pickle
 
 
 """

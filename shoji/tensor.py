@@ -232,9 +232,8 @@ limits the total size of the row of a tensor. If all the data for a single row c
 be retrieved in less than five seconds, you will have to redesign the data model (e.g. 
 breaking out some dimensions to a separate tensor).
 """
-from typing import Tuple, Union, List, Optional, Callable, Any, Literal
+from typing import Tuple, Union, List, Optional, Callable, Literal
 import numpy as np
-import logging
 import shoji
 
 
