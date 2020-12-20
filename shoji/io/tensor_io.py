@@ -12,7 +12,7 @@ which are translated to and from chunks as needed.
 """
 
 @fdb.transactional
-def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -> None:
+def create_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor) -> None:
 	"""
 	Creates a new tensor (but does not write the inits)
 
@@ -31,21 +31,6 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 				if dim is None:
 					raise KeyError(f"Tensor dimension '{d}' is not defined")
 				if dim.shape is not None:  # This is a fixed-length dimension
-					if ix == 0 and tensor.inits is None:
-							raise ValueError(f"Values (inits) must be provided for Tensor '{name}' with first dimension '{dim.name}' declared with fixed length {dim.shape}")
-					elif tensor.inits is not None:
-						if tensor.jagged:
-							assert isinstance(tensor.inits, list)
-							for row in tensor.inits:
-								if row.shape[ix] != dim.shape:
-									raise ValueError(f"Tensor '{name}' dimension {ix} ('{tensor.dims[ix]}') must be exactly {dim.shape} elements long")
-						elif dim.shape != tensor.inits.shape[ix]:  # type: ignore
-							raise ValueError(f"Tensor '{name}' dimension {ix} ('{tensor.dims[ix]}') must be exactly {dim.shape} elements long")
-				# Check that the dimensions of the tensor match the shape of the tensor
-				if dim.shape is None:
-					if ix > 0:
-						tensor.jagged = True
-				else:
 					if tensor.inits is not None and tensor.shape[ix] != dim.shape:
 						raise IndexError(f"Mismatch between the declared shape {dim.shape} of dimension '{d}' and the shape {tensor.shape} of values")
 	key = subdir.pack(("tensors", name))
@@ -53,12 +38,12 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: s
 	if tensor.inits is not None:
 		tensor.initializing = True
 	tr[key] = pickle.dumps(tensor)
+		
 
-
-def initialize_tensor(wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor):
+def initialize_tensor(wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor):
 	if tensor.inits is not None:
 		if tensor.rank == 0:
-			write_at_indices(wsm._db.transaction, wsm, ("tensors", name), indices=None, chunk_sizes=None, values=tensor.inits.values, compression=tensor.compressed)
+			write_at_indices(wsm._db.transaction, wsm, ("tensor_values", name), indices=None, chunk_sizes=None, values=tensor.inits.values, compression=tensor.compressed)
 		else:
 			# Hide the true dimensions so the append will not fail due to consistency checks
 			dims = tensor.dims
@@ -66,40 +51,42 @@ def initialize_tensor(wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tens
 			append_values_multibatch(wsm, [name], [tensor.inits], axes=(0,))
 			tensor.dims = dims
 		# Complete the intitalization in one atomic operation
-		finish_initialization(wsm._db.transaction, wsm, name, tensor)
+		finish_initialization(wsm._db.transaction, wsm, name)
 
 
 @fdb.transactional
-def finish_initialization(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor) -> None:
-	assert tensor.inits is not None
+def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> None:
+	tensor = shoji.io.get_tensor(tr, wsm, name, include_initializing=True)
+	assert tensor.initializing
+	tensor.initializing = False
 	# Update the tensor definition to clear the Initializing flag
 	subdir = wsm._subdir
 	key = subdir.pack(("tensors", name))
 	tr[key] = pickle.dumps(tensor)
 
 	# Update the first dimension
-	if tensor.rank > 0 and isinstance(tensor.dims[0], str):
-		dim = wsm._get_dimension(tensor.dims[0])
-		# Redo this test here, since dimension might have changed while we were writing the inits
-		if dim.length != 0 and dim.length != len(tensor.inits):
-			raise ValueError(f"Length {len(tensor.inits)} of new tensor '{name}' does not match length {dim.length} of first dimension '{tensor.dims[0]}' ")
-		if dim.length == 0:
-			dim.length = len(tensor.inits)
-			shoji.io.create_dimension(tr, wsm, tensor.dims[0], dim)
+	if tensor.rank > 0:
+		for shape, dname in zip(tensor.shape, tensor.dims):
+			if isinstance(dname, str):
+				dim = wsm._get_dimension(dname)
+				if dim.length == 0:
+					dim.length = shape
+					shoji.io.create_dimension(tr, wsm, dname, dim)
+				elif dim.length != shape:
+					raise ValueError(f"Length {shape} of new tensor '{name}' does not match length {dim.length} of dimension '{dname}' ")
 
 
 @fdb.transactional
-def update_tensor(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, tensor: shoji.Tensor, initializing: bool = False) -> None:
+def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor) -> None:
 	# Store tensor definition (overwriting any existing definition)
-	# ("tensors", name) = (dtype, rank, jagged) + dims + shape  
-	# where shape[0] == -1 if jagged, and tuple value is encoded using pickle
+
 	subdir = wsm._subdir
 	key = subdir.pack(("tensors", name))
 	tr[key] = pickle.dumps(tensor)
 
 
 @fdb.transactional
-def write_at_indices(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray, compression: bool = True) -> int:
+def write_at_indices(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray, compression: bool = True) -> int:
 	"""
 	Write values corresponding to indices along each dimension (row indices, column indices, ...), automatically managing chunks as needed
 
@@ -128,26 +115,33 @@ def write_at_indices(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, key_
 		# the chunk for writing. We also need to construct a mask if the chunk is not fully covered
 		chunk_indices = [ind[(ind // sz) == a] - a * sz for a, ind, sz in zip(address, indices, chunk_sizes)]
 		chunk = np.empty_like(values, shape=chunk_sizes)
+		# These are the indices into the whole tensor that fall within the chunk
 		tensor_indices = [ind[(ind // sz) == a] for a, ind, sz in zip(address, indices, chunk_sizes)]
-		chunk[np.ix_(*tensor_indices)] = values[np.ix_(*tensor_indices)]
+		# Now figure out which part of the values tensor they correspond to (always a dense sub-tensor)
+		starts = [(i < min(j)).sum() for i, j in zip(indices, tensor_indices)]
+		lengths = [len(j) for j in tensor_indices]
+		values_slices = tuple(slice(s, s + l) for s, l in zip(starts, lengths))
+
+		# Finally, copy the correct subtensor of values into the right slots in the chunk
+		chunk[np.ix_(*chunk_indices)] = values[values_slices]
 
 		mask = np.ones(chunk_sizes, dtype=bool)
 		mask[np.ix_(*chunk_indices)] = False
 		if np.any(mask):
-			chunks.append(np.ma.array(chunk, mask))
+			chunks.append(np.ma.masked_array(chunk, mask=mask))
 		else:
 			chunks.append(chunk)
 
 	return shoji.io.write_chunks(tr, subspace, key_prefix, addresses, chunks, compression)
 
 
-def read_at_indices(wsm: shoji.WorkspaceManager, tensor: str, indices: List[np.ndarray], chunk_sizes: Tuple[int, ...], compression: bool = True, transactional: bool = True) -> np.ndarray:
+def read_at_indices(wsm: "shoji.WorkspaceManager", tensor: str, indices: List[np.ndarray], chunk_sizes: Tuple[int, ...], compression: bool = True, transactional: bool = True) -> np.ndarray:
 	"""
 	Read values corresponding to indices along each dimension (row indices, column indices, ...), automatically managing chunks as needed
 
 	Args:
 		wsm: workspace 
-		tensr: name of the tensor
+		tensor: name of the tensor
 		indices: A list of numpy arrays giving the indices of the desired chunks
 		chunk_sizes: A tuple of ints giving the size of chunks in each dimension
 		compression: If true, decompress chunks when reading
@@ -165,9 +159,9 @@ def read_at_indices(wsm: shoji.WorkspaceManager, tensor: str, indices: List[np.n
 	addresses = np.array(np.meshgrid(*addresses_per_dim)).T.reshape(-1, len(indices))
 	# Read the chunk data and unravel it into the result ndarray
 	if transactional:
-		chunks = shoji.io.read_chunks(wsm._db.transaction, wsm._subdir, ("tensors", tensor), addresses, compression)
+		chunks = shoji.io.read_chunks(wsm._db.transaction, wsm._subdir, ("tensor_values", tensor), addresses, compression)
 	else:
-		chunks = shoji.io.read_chunks_multibatch(wsm._db.transaction, wsm._subdir, ("tensors", tensor), addresses, compression)
+		chunks = shoji.io.read_chunks_multibatch(wsm._db.transaction, wsm._subdir, ("tensor_values", tensor), addresses, compression)
 	result = np.empty_like(chunks[0], shape=[len(i) for i in indices])
 	for address, chunk in zip(addresses, chunks):
 		# At this point, we have a chunk at a particular address, and we have the indices
@@ -202,7 +196,7 @@ def dtype_class(dtype) -> Union[Type[int], Type[float], Type[bool], Type[str]]:
 	
 
 @fdb.transactional
-def append_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, names: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
+def append_values(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", names: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
 	"""
 	Returns:
 		Number of bytes written
@@ -215,7 +209,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, names: 
 	# Check that all the input values have same length along the relevant axis
 	n_rows = -1
 	for name, vals, axis in zip(names, values, axes):
-		assert isinstance(vals, np.ndarray), f"Input values must be numpy ndarrays, but '{name}' was {type(vals)}"
+		assert isinstance(vals, shoji.TensorValue), f"Input values must be numpy shoji.TensorValue, but '{name}' was {type(vals)}"
 		assert vals.rank >= 1, f"Input values must be at least 1-dimensional, but '{name}' was scalar"
 		if n_rows == -1:
 			n_rows = vals.shape[axis]
@@ -223,7 +217,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, names: 
 			raise ValueError(f"Length (along relevant axis) of all tensors must be the same when appending")
 
 	n_bytes_written = 0
-	all_tensors = {t.name: t for t in shoji.io.list_tensors(tr, wsm)}
+	all_tensors = {t.name: t for t in shoji.io.list_tensors(tr, wsm, include_initializing=True)}
 	tensors: List[shoji.Tensor] = []
 
 	# Check that all the tensors exist, and have the right dimensions
@@ -251,8 +245,8 @@ def append_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, names: 
 				if tensor.rank != row.ndim + 1:  # type: ignore
 					raise ValueError(f"Tensor '{name}' of rank {tensor.rank} cannot be appended with rank-{row.ndim + 1} array")  # type: ignore
 		else:
-			if tensors[name].rank != values.ndim:  # type: ignore
-				raise ValueError(f"Tensor '{name}' of rank {tensor.rank} cannot be appended with rank-{values.ndim} array")  # type: ignore
+			if tensor.rank != vals.rank:  # type: ignore
+				raise ValueError(f"Tensor '{name}' of rank {tensor.rank} cannot be appended with rank-{vals.rank} array")  # type: ignore
 		for i in range(tensor.rank):
 			if i == axis:
 				new_length = tensor.shape[i] + vals.shape[i]  # new_length will be the same for every tensor, since they start the same, and we checked above that the values are the same length
@@ -261,6 +255,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, names: 
 					raise ValueError(f"Cannot append values of shape {vals.shape} to tensor of shape {tensor.shape} along axis {axis}")
 
 	# Check that all relevant tensors will have the right length after appending
+	all_tensors = {n: t for n, t in all_tensors.items() if not t.initializing}  # Omit initializing tensors
 	if dname is not None:
 		for tensor in all_tensors.values():
 			if tensor not in tensors:
@@ -277,10 +272,15 @@ def append_values(tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, names: 
 				key = subspace.pack(("tensor_indexes", name, casted_value, int(indices[0][i])))
 				n_bytes_written += len(key)
 				tr[key] = b''
-		n_bytes_written += write_at_indices(tr, subspace, ("tensors", name), indices, tensor.chunks, vals, tensor.compressed)
+		n_bytes_written += write_at_indices(tr, wsm, ("tensor_values", name), indices, tensor.chunks, vals.values, tensor.compressed)
+		# Update tensor shape
+		shape = list(tensor.shape)
+		shape[axis] += vals.shape[axis]
+		tensor.shape = tuple(shape)
+		update_tensor(tr, wsm, tensor.name, tensor)
 	return n_bytes_written
 
-def append_values_multibatch(wsm: shoji.WorkspaceManager, tensors: List[str], values: List[np.ndarray], axes: Tuple[int]) -> int:
+def append_values_multibatch(wsm: "shoji.WorkspaceManager", tensors: List[str], values: List[np.ndarray], axes: Tuple[int]) -> int:
 	"""
 	Append values to a set of tensors, using multiple batches (transactions) if needed.
 
@@ -305,11 +305,12 @@ def append_values_multibatch(wsm: shoji.WorkspaceManager, tensors: List[str], va
 	ix = 0
 	while ix < n_total:
 		try:
-			n_bytes_written += append_values(wsm._db.transaction, wsm._subdir, tensors, values, axes)
+			n_bytes_written += append_values(wsm._db.transaction, wsm, tensors, values, axes)
 		except fdb.impl.FDBError as e:
 			if e.code in (1004, 1007, 1031, 2101) and n > 1:  # Too many bytes or too long time, so try again with less
 				n = max(1, n // 2)
 				continue
 			else:
 				raise e
+		ix += n
 	return n_bytes_written

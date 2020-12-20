@@ -6,7 +6,7 @@ import numpy as np
 
 
 @fdb.transactional
-def const_compare(tr, wsm: shoji.WorkspaceManager, name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
+def const_compare(tr, wsm: "shoji.WorkspaceManager", name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
 	"""
 	Compare a tensor to a constant value, and return all indices that match
 	"""

@@ -39,7 +39,7 @@ view = ws.scRNA[ws.Age > 10, ws.Chromosome == "chr1"]
 
 
 """
-from typing import Tuple, Callable, Union
+from typing import Tuple, Callable, Union, List
 import shoji
 import shoji.io
 import numpy as np
@@ -68,7 +68,9 @@ class View:
 				shape.append(tensor.shape[i])
 		return tuple(shape)
 
-	def _read_chunk(self, tensor: shoji.Tensor, start: int, end: int) -> np.ndarray:
+	def _read_batch(self, tensor: shoji.Tensor, start: int, end: int) -> np.ndarray:
+		if tensor.jagged:
+			raise ValueError(f"Cannot read batches of jagged tensor '{tensor.name}'")
 		indices = []
 		for i, dim in enumerate(tensor.dims):
 			if dim in self.filters:
@@ -83,9 +85,7 @@ class View:
 		return result
 
 	def __getattr__(self, name: str) -> np.ndarray:
-		tensor = self.wsm[name]
-		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
-
+		tensor = self.wsm._get_tensor(name)
 		indices = []
 		for i, dim in enumerate(tensor.dims):
 			if dim in self.filters:
@@ -107,7 +107,7 @@ class View:
 			raise KeyError("Cannot slice a view (not implemented)")
 		return self.__getattr__(expr)
 
-	def __setattr__(self, name: str, vals: np.ndarray) -> None:
+	def __setattr__(self, name: str, vals: Union[List[np.ndarray], np.ndarray]) -> None:
 		tensor: shoji.Tensor = self.wsm[name]
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
 		assert isinstance(vals, (np.ndarray, list, tuple)), f"Value assigned to '{name}' is not a numpy array or a list or tuple of numpy arrays"
@@ -118,8 +118,7 @@ class View:
 				indices.append(np.sort(self.filters[dim].get_rows(self.wsm)))
 			else:
 				indices.append(np.arange(tensor.shape[i]))
-		tv = shoji.TensorValue(vals)
-		shoji.io.write_at_indices(self.wsm._db.transaction, self.wsm, ("tensors", name), indices, tensor.chunks, tv, tensor.compressed)
+		shoji.io.write_at_indices(self.wsm._db.transaction, self.wsm, ("tensor_values", name), indices, tensor.chunks, vals, tensor.compressed)
 
 	def __setitem__(self, name: str, vals: np.ndarray) -> None:
 		return self.__setattr__(name, vals)

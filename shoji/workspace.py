@@ -86,6 +86,7 @@ import loompy
 import shoji
 import shoji.io
 import h5py
+from copy import copy
 
 
 class Workspace:
@@ -142,8 +143,8 @@ class WorkspaceManager:
 			return names
 		return [name for name in names if shoji.io.get_tensor(self._db.transaction, self, name) is not None]
 
-	def _get_tensor(self, name: str) -> shoji.Tensor:
-		tensor = self[name]
+	def _get_tensor(self, name: str, row: int = -1) -> shoji.Tensor:
+		tensor = shoji.io.get_tensor(self._db.transaction, self, name, row)
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a tensor"
 		return tensor
 
@@ -244,6 +245,8 @@ class WorkspaceManager:
 					raise AttributeError(f"Cannot create new tensor '{name}' because it would overwrite existing entity")
 			shoji.io.create_tensor(self._db.transaction, self, name, tensor)
 			shoji.io.initialize_tensor(self, name, tensor)
+		elif isinstance(value, shoji.WorkspaceManager):
+			raise ValueError("Cannot assign WorkspaceManager object to workspace (did you mean to use Workspace object?")
 		else:
 			super().__setattr__(name, value)
 	

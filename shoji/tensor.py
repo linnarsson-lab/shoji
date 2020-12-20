@@ -237,6 +237,9 @@ import numpy as np
 import shoji
 
 
+FancyIndexElement = Union["shoji.Filter", slice, int, np.ndarray]
+FancyIndex = Union[FancyIndexElement, Tuple[FancyIndexElement, ...]]
+
 class TensorValue:
 	def __init__(self, values: Union[Tuple[np.ndarray], List[np.ndarray], np.ndarray]) -> None:
 		self.values = values
@@ -308,14 +311,15 @@ class TensorValue:
 class Tensor:
 	valid_types = ("bool", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "string")
 
-	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], inits: Union[List[np.ndarray], np.ndarray] = None, chunks: Union[Literal["auto"], Tuple[int, ...]] = "auto", compressed: bool = True) -> None:
+	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], jagged: bool = False, inits: Union[List[np.ndarray], np.ndarray] = None, chunks: Union[Literal["auto"], Tuple[int, ...]] = "auto", compressed: bool = True) -> None:
 		"""
 		Args:
 			dtype:	string giving the datatype of the tensor elements
 			dims:	A tuple of None, int, string (empty tuple designates a scalar)
+			jagged: If true, create a jagged tensor
 			inits:	Optional values to initialize the tensor with
 			chunks: Tuple defining the chunk size along each dimension, or "auto" to use automatic chunking, or None to use old-style automatic chunking
-			compressed: If true use compression
+			compressed: If true, use compression
 
 		Remarks:
 			Dimensions are specified as:
@@ -323,8 +327,6 @@ class Tensor:
 				None:		resizable/jagged anonymous dimension
 				int:		fixed-shape anonymous dimension
 				string:		named dimension
-			
-			The first dimension can be fixed-shape or resizable; all other dimensions can be fixed-shape or jagged. 
 
 			Chunking has no effect for rank-0 tensors
 		"""
@@ -335,13 +337,13 @@ class Tensor:
 			raise TypeError(f"Invalid Tensor type {dtype}")
 
 		self.dims = dims
+		self.jagged = jagged
 
 		self.name = ""  # Will be set if the Tensor is read from the db
 		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
 
 		if inits is None:
 			self.inits: Optional[TensorValue] = None
-			self.jagged = False
 			self.shape = (0,) * len(dims)
 		else:
 			# If scalar, convert to an ndarray scalar which will have shape ()
@@ -349,7 +351,8 @@ class Tensor:
 				self.inits = TensorValue(np.array(inits, dtype=self.numpy_dtype()))
 			else:
 				self.inits = TensorValue(inits)
-			self.jagged = self.inits.jagged
+			if self.inits.jagged and not self.jagged:
+				raise ValueError(f"Jagged inits cannot be used to create non-jagged tensor")
 			self.shape = self.inits.shape
 
 			if len(self.dims) != len(self.shape):
@@ -381,11 +384,11 @@ class Tensor:
 	# Support pickling
 	def __getstate__(self):
 		"""Return state values to be pickled."""
-		return (self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks, self.compressed, self.initializing)
+		return (self.dtype, self.jagged, self.dims, self.shape, self.chunks, self.compressed, self.initializing, 0)  # The extra zero is for future use as a flag
 
 	def __setstate__(self, state):
 		"""Restore state from the unpickled state values."""
-		self.dtype, self.rank, self.jagged, self.dims, self.shape, self.chunks, self.compressed, self.initializing = state
+		self.dtype, self.jagged, self.dims, self.shape, self.chunks, self.compressed, self.initializing, _ = state
 
 	def __len__(self) -> int:
 		if self.rank > 0:
@@ -408,54 +411,47 @@ class Tensor:
 			return 4
 		return -1
 
-	def __getitem__(self, expr: Union["shoji.Filter", tuple, slice, int]) -> np.ndarray:
-		assert self.wsm is not None, "Tensor is not bound to a database"
+	def _fancy_indexing(self, expr: FancyIndex) -> Tuple["shoji.Filter", ...]:
+		if isinstance(expr, tuple):
+			fancyindex: Tuple[FancyIndexElement, ...] = expr
+		else:
+			fancyindex = (expr,)
+	
+		# Fill in missing axes with : just like numpy does
+		if ... in fancyindex:
+			ix = fancyindex.index(...)
+			fancyindex = fancyindex[:ix] + (slice(None),) * (self.rank - len(fancyindex) - 1) + fancyindex[ix + 1:]
 
-		# Maybe it's a Filter?
-		if isinstance(expr, shoji.Filter):
-			return shoji.View(self.wsm, (expr,))[self.name]
+		if len(fancyindex) < self.rank:
+			fancyindex += (slice(None),) * (self.rank - len(fancyindex))
 
-		# Or a slice?
-		if isinstance(expr, slice):
-			if expr.start is None and expr.stop is None:
-				return shoji.View(self.wsm, ())[self.name]
-			return shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name]
-
-		if isinstance(expr, (list, tuple, int, np.int64, np.int32)):
-			expr = np.array(expr)
-		if isinstance(expr, np.ndarray):
-			if np.issubdtype(expr.dtype, np.bool_):
-				view = shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))
-			elif np.issubdtype(expr.dtype, np.int_):
-				view = shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name]
+		filters: List[shoji.Filter] = []
+		for axis, (dim, fi) in enumerate(zip(self.dims, fancyindex)):
+			# Maybe it's a Filter?
+			if isinstance(fi, shoji.Filter):
+				if isinstance(dim, str) and isinstance(fi.dim, str) and fi.dim != dim:
+					raise IndexError(f"Tensor dimension '{dim}' cannot be indexed uing filter expression '{fi}' with dimension '{fi.dim}'")
+				filters.append(fi)
+			elif isinstance(fi, slice):
+				filters.append(shoji.TensorSliceFilter(self, fi, axis))
+			elif isinstance(fi, (int, np.int64, np.int32)):
+				filters.append(shoji.TensorIndicesFilter(self, np.array(fi), axis))
+			elif isinstance(fi, np.ndarray):
+				if np.issubdtype(fi.dtype, np.bool_):
+					filters.append(shoji.TensorBoolFilter(self, fi, axis))
+				elif np.issubdtype(fi.dtype, np.int_):
+					filters.append(shoji.TensorIndicesFilter(self, fi, axis))
 			else:
 				raise KeyError()
-			return view[self.name]
-		raise KeyError(expr)
+		return tuple(filters)
 
-	def __setitem__(self, expr: Union["shoji.Filter", tuple, slice, int], vals: np.ndarray) -> None:
+	def __getitem__(self, expr: FancyIndex) -> np.ndarray:
 		assert self.wsm is not None, "Tensor is not bound to a database"
-		# Maybe it's a Filter?
-		if isinstance(expr, shoji.Filter):
-			shoji.View(self.wsm, (expr,))[self.name] = vals
-			return
-		# Or a slice?
-		if isinstance(expr, slice):
-			if expr.start is None and expr.stop is None:
-				shoji.View(self.wsm, ())[self.name] = vals
-				return
-			shoji.View(self.wsm, (shoji.TensorSliceFilter(self, expr),))[self.name] = vals
-			return
-		if isinstance(expr, (list, tuple, int, np.integer)):
-			expr = np.array(expr)
-		if isinstance(expr, np.ndarray):
-			if np.issubdtype(expr.dtype, np.bool_):
-				shoji.View(self.wsm, (shoji.TensorBoolFilter(self, expr),))[self.name] = vals
-			elif np.issubdtype(expr.dtype, np.int_):
-				shoji.View(self.wsm, (shoji.TensorIndicesFilter(self, expr),))[self.name] = vals
-			return
-		else:
-			raise KeyError(expr)
+		return shoji.View(self.wsm, self._fancy_indexing(expr))[self.name]
+
+	def __setitem__(self, expr: FancyIndex, vals: np.ndarray) -> None:
+		assert self.wsm is not None, "Tensor is not bound to a database"
+		shoji.View(self.wsm, self._fancy_indexing(expr))[self.name] = vals
 
 	def numpy_dtype(self) -> str:
 		if self.dtype == "string":

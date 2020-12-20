@@ -164,6 +164,8 @@ class GroupViewBy:
 		if self.acc is not None:
 			return self.acc
 		tensor = self.view.wsm._get_tensor(of_tensor)
+		if tensor.jagged:
+			raise NotImplementedError("Cannot group jagged tensor")
 		n_rows = self.view.get_length(tensor.dims[0])
 		if self.labels is None:
 			label_values = np.zeros(n_rows)
@@ -179,10 +181,10 @@ class GroupViewBy:
 
 		n_rows_per_batch = 1000
 		for ix in range(0, n_rows, n_rows_per_batch):
-			chunk = self.view._read_chunk(tensor, ix, ix + n_rows_per_batch)
-			chunk_labels = labels[ix: ix + n_rows_per_batch]
-			for i, label in enumerate(chunk_labels):
-				acc.add(le.classes_[label], chunk[i])
+			batch = self.view._read_batch(tensor, ix, ix + n_rows_per_batch)
+			batch_labels = labels[ix: ix + n_rows_per_batch]
+			for i, label in enumerate(batch_labels):
+				acc.add(le.classes_[label], batch[i])
 		return acc
 
 	def sum(self, of_tensor: str) -> np.ndarray:

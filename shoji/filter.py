@@ -365,54 +365,57 @@ class DimensionBoolFilter(Filter):
 
 
 class TensorSliceFilter(Filter):
-	def __init__(self, tensor: shoji.Tensor, slice_: slice) -> None:
-		self.dim = tensor.dims[0] if tensor.rank > 0 else None
+	def __init__(self, tensor: shoji.Tensor, slice_: slice, axis: int) -> None:
+		self.dim = tensor.dims[axis] if tensor.rank > 0 else None
 		self.tensor = tensor
 		self.slice_ = slice_
+		self.axis = axis
 
 	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return np.arange(self.tensor.shape[0])
+		return np.arange(self.tensor.shape[self.axis])
 
 	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		s = self.slice_.indices(self.tensor.shape[0])
+		s = self.slice_.indices(self.tensor.shape[self.axis])
 		return np.arange(s[0], s[1], s[2])
 
 	def __repr__(self) -> str:
-		s = self.slice_.indices(self.tensor.shape[0])
+		s = self.slice_.indices(self.tensor.shape[self.axis])
 		return f"({self.tensor.name}[{s[0]}:{s[1]}:{s[2]}])"
 
 
 class TensorIndicesFilter(Filter):
-	def __init__(self, tensor: shoji.Tensor, indices: np.ndarray) -> None:
-		self.dim = tensor.dims[0] if tensor.rank > 0 else None
+	def __init__(self, tensor: shoji.Tensor, indices: np.ndarray, axis: int) -> None:
+		self.axis = axis
+		self.dim = tensor.dims[axis] if tensor.rank > 0 else None
 		self.tensor = tensor
 		self.indices = indices
 
 	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return np.arange(self.tensor.shape[0])
+		return np.arange(self.tensor.shape[self.axis])
 
 	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		self.indices[self.indices < 0] = self.indices[self.indices < 0] + self.tensor.shape[0]
+		self.indices[self.indices < 0] = self.indices[self.indices < 0] + self.tensor.shape[self.axis]
 		if not np.all(self.indices < len(self.tensor)):
 			raise IndexError("Index out of range")
-		return self.indices[self.indices < self.tensor.shape[0]]
+		return self.indices[self.indices < self.tensor.shape[self.axis]]
 
 	def __repr__(self) -> str:
 		return f"({self.tensor.name}[{self.indices}])"
 
 
 class TensorBoolFilter(Filter):
-	def __init__(self, tensor: shoji.Tensor, selected: np.ndarray) -> None:
-		self.dim = tensor.dims[0] if tensor.rank > 0 else None
+	def __init__(self, tensor: shoji.Tensor, selected: np.ndarray, axis: int) -> None:
+		self.axis = axis
+		self.dim = tensor.dims[axis] if tensor.rank > 0 else None
 		self.tensor = tensor
 		self.selected = selected
 
 	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return np.arange(self.tensor.shape[0])
+		return np.arange(self.tensor.shape[self.axis])
 
 	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		if self.selected.shape[0] != self.tensor.shape[0]:
-			raise IndexError(f"Boolean array used for fancy indexing along first dimension of '{self.tensor.name}' has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}")
+		if self.selected.shape[self.axis] != self.tensor.shape[self.axis]:
+			raise IndexError(f"Boolean array used for fancy indexing along first dimension of '{self.tensor.name}' has {self.selected.shape[self.axis]} elements but tensor length is {self.tensor.shape[self.axis]}")
 		return np.where(self.selected)[0]
 
 	def __repr__(self) -> str:

@@ -2,7 +2,7 @@ from typing import List, Tuple, Any, Union
 import numpy as np
 import fdb
 import blosc
-
+from numpy.ma.core import MaskedArray
 
 """
 # 2. Chunked storage API
@@ -27,7 +27,7 @@ silently overwrites the existing chunk.
 
 
 @fdb.transactional
-def write_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any], addresses: np.ndarray, chunks: List[Union[np.ndarray, np.ma.ndarray]], compression: bool = True) -> int:
+def write_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any], addresses: np.ndarray, chunks: List[Union[np.ndarray, MaskedArray]], compression: bool = True) -> int:
 	"""
 	Write a list of chunks to the database, optionally using mask to write only partially
 
@@ -49,13 +49,13 @@ def write_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Director
 	"""
 	n_bytes_written = 0
 	for address, chunk in zip(addresses, chunks):
-		key = subspace.pack(key_prefix + tuple(address))
-		mask = np.ma.getmask(chunk)
-		if mask != False:
-			prev_value = read_chunks(tr, subspace, key_prefix, address[None, :], compression)[0]
-			if prev_value is None:
-				raise IOError("Attempt to write masked chunk to an empty address")
-			chunk[mask] = prev_value
+		key = subspace.pack(key_prefix + tuple(int(x) for x in address))
+		if isinstance(chunk, np.ma.MaskedArray):
+			mask = np.ma.getmask(chunk)
+			if np.any(mask):
+				prev_value = read_chunks(tr, subspace, key_prefix, address[None, :], compression)[0]
+				if prev_value is not None:
+					chunk[mask] = prev_value[mask]
 			chunk = chunk.data
 		if compression:
 			encoded = blosc.pack_array(chunk)
@@ -63,6 +63,7 @@ def write_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Director
 			encoded = chunk
 		n_bytes_written += len(key) + len(encoded)
 		tr[key] = encoded
+		#print("wrote chunk", key, chunk[:20])
 	return n_bytes_written
 
 @fdb.transactional
@@ -83,14 +84,19 @@ def read_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Directory
 	Remarks:
 		Chunks that don't exist in the database are returned as None
 	"""
-	chunks = []
+	chunks: List[np.ndarray] = []
 	for address in addresses:
-		key = subspace.pack(key_prefix + tuple(address))
-		if compression:
-			decoded = blosc.unpack_array(tr[key])
+		key = subspace.pack(key_prefix + tuple(int(x) for x in address))
+		data = tr[key].value
+		if data is None:
+			chunks.append(None)
 		else:
-			decoded = tr[key]
-		chunks.append(decoded)
+			if compression:
+				decoded = blosc.unpack_array(tr[key].value)
+			else:
+				decoded = tr[key]
+			chunks.append(decoded)
+			#print("Read chunk", key, decoded[:20])
 	return chunks
 
 # Note: no @fdb.transactional decorator since this uses multiple transanctions inside the function
@@ -108,4 +114,5 @@ def read_chunks_multibatch(db: fdb.impl.Database, subspace: fdb.directory_impl.D
 				continue
 			else:
 				raise e
+		ix += n
 	return chunks
