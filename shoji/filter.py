@@ -372,10 +372,12 @@ class TensorSliceFilter(Filter):
 		self.axis = axis
 
 	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return np.arange(self.tensor.shape[self.axis])
+		raise NotImplementedError()
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		s = self.slice_.indices(self.tensor.shape[self.axis])
+	def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -> np.ndarray:
+		if n_rows is None:
+			n_rows = self.tensor.shape[self.axis]
+		s = self.slice_.indices(n_rows)
 		return np.arange(s[0], s[1], s[2])
 
 	def __repr__(self) -> str:
@@ -391,13 +393,15 @@ class TensorIndicesFilter(Filter):
 		self.indices = indices
 
 	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return np.arange(self.tensor.shape[self.axis])
+		raise NotImplementedError()
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -> np.ndarray:
+		if n_rows is None:
+			n_rows = self.tensor.shape[self.axis]
 		self.indices[self.indices < 0] = self.indices[self.indices < 0] + self.tensor.shape[self.axis]
-		if not np.all(self.indices < len(self.tensor)):
+		if not np.all(self.indices < n_rows):
 			raise IndexError("Index out of range")
-		return self.indices[self.indices < self.tensor.shape[self.axis]]
+		return self.indices[self.indices < n_rows]
 
 	def __repr__(self) -> str:
 		return f"({self.tensor.name}[{self.indices}])"
@@ -411,11 +415,14 @@ class TensorBoolFilter(Filter):
 		self.selected = selected
 
 	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return np.arange(self.tensor.shape[self.axis])
+		raise NotImplementedError()
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		if self.selected.shape[self.axis] != self.tensor.shape[self.axis]:
-			raise IndexError(f"Boolean array used for fancy indexing along first dimension of '{self.tensor.name}' has {self.selected.shape[self.axis]} elements but tensor length is {self.tensor.shape[self.axis]}")
+	def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -> np.ndarray:
+		if n_rows is None:
+			n_rows = self.tensor.shape[self.axis]
+
+		if self.selected.shape[self.axis] != n_rows:
+			raise IndexError(f"Boolean array used for fancy indexing along axis {self.axis} of '{self.tensor.name}' has {self.selected.shape[self.axis]} elements but tensor length is {n_rows}")
 		return np.where(self.selected)[0]
 
 	def __repr__(self) -> str:

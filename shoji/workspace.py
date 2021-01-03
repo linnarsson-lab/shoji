@@ -85,6 +85,7 @@ import logging
 import loompy
 import shoji
 import shoji.io
+from shoji.io import Compartment
 import h5py
 from copy import copy
 
@@ -130,7 +131,7 @@ class WorkspaceManager:
 		return ws
 
 	def _dimensions(self) -> List[str]:
-		return [self._subdir["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["dimensions"].range()]]
+		return [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
 
 	def _get_dimension(self, name: str) -> shoji.Dimension:
 		dim = self[name]
@@ -138,7 +139,7 @@ class WorkspaceManager:
 		return dim
 
 	def _tensors(self, include_not_ready: bool = False) -> List[str]:
-		names = [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
+		names = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
 		if include_not_ready:
 			return names
 		return [name for name in names if shoji.io.get_tensor(self._db.transaction, self, name) is not None]
@@ -149,8 +150,8 @@ class WorkspaceManager:
 		return tensor
 
 	def __dir__(self) -> List[str]:
-		dimensions = [self._subdir["dimensions"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["dimensions"].range()]]
-		tensors = [self._subdir["tensors"].unpack(k)[0] for k,v in self._db.transaction[self._subdir["tensors"].range()]]
+		dimensions = [self._subdir[Compartment.Dimensions].unpack(k)[0] for k,v in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
+		tensors = [self._subdir[Compartment.Tensors].unpack(k)[0] for k,v in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
 		return self._subdir.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
 	def __iter__(self):
@@ -435,8 +436,8 @@ class WorkspaceManager:
 			
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
-		dimensions = [self._subdir["dimensions"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["dimensions"].range()]]
-		tensors = [self._subdir["tensors"].unpack(k.key)[0] for k in self._db.transaction[self._subdir["tensors"].range()]]
+		dimensions = [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
+		tensors = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
 		s = f"Workspace with {len(subdirs)} workspaces, {len(dimensions)} dimensions and {len(tensors)} tensors:"
 		for sub in subdirs:
 			s += f"\n  {sub} <Workspace>" 

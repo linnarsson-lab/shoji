@@ -103,7 +103,7 @@ class Dimension:
 
 	def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -> None:
 		"""
-		Append values to all tensors that have this as their first dimension
+		Append values to all tensors that have this as one of their dimensions
 
 		Args:
 			vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
@@ -117,34 +117,21 @@ class Dimension:
 		assert self.wsm is not None, "Cannot append to unsaved dimension"
 		assert self.shape is None, "Cannot append to fixed-size dimension"
 
-		# Check that all the values have same length
+		# Figure out the relevant axes
+		axes: List[int] = []
 		n_rows = -1
 		for name, values in vals.items():
 			assert isinstance(values, np.ndarray), f"Input values must be numpy ndarrays, but '{name}' was {type(values)}"
 			assert values.ndim >= 1, f"Input values must be at least 1-dimensional, but '{name}' was scalar"
+			tensor = self.wsm._get_tensor(name)
+			assert self.name in tensor.dims, f"Input values were provided for '{name}', but '{self.name}' is not one of its dimensions"
+			axis = tensor.dims.index(self.name)
 			if n_rows == -1:
-				n_rows = len(values)
-			elif len(values) != n_rows:
+				n_rows = values.shape[axis]
+			elif values.shape[axis] != n_rows:
 				raise ValueError(f"Length (along first dimension) of tensors must be the same when appending, but '{name}' was length {len(values)} while other arrays were {n_rows} long")
+			axes.append(axis)
 
-		n_bytes = 0
-		for name, val in vals.items():
-			tv = shoji.TensorValue(val)
-			n_bytes += tv.size_in_bytes()
-
-		n_bytes_per_transaction = 1_000_000  # Starting point, but we'll adapt it below
-		ix: int = 0
-		while ix < n_rows:
-			n_rows_per_transaction = int(max(1, n_rows / (n_bytes / n_bytes_per_transaction)))
-			batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-			try:
-				n_bytes_written = shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
-			except fdb.impl.FDBError as e:
-				if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction > 1:  # Too many bytes or too long time, so try again with less
-					n_bytes_per_transaction = max(1, n_bytes_per_transaction // 2)
-					continue
-				else:
-					raise e
-			if n_bytes_written < n_bytes_per_transaction // 2:  # Not enough bytes, so increase for next round
-				n_bytes_per_transaction *= 2
-			ix += n_rows_per_transaction
+		names = list(vals.keys())
+		values = [shoji.TensorValue(x) for x in vals.values()]
+		shoji.io.append_values_multibatch(self.wsm, names, values, tuple(axes))

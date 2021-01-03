@@ -1,5 +1,6 @@
 import shoji
 import pytest
+import numpy as np
 
 
 def test_create_workspace():
@@ -56,3 +57,24 @@ def test_move_workspace_collision():
 		db.test._move_to(("test2",))
 	del db.test
 	del db.test2
+
+
+def test_delete_workspace_with_contents():
+	db = shoji.connect()
+	if "test" in db:
+		del db.test
+	db.test = shoji.Workspace()
+	db.test.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	db.test.sub = shoji.Workspace()
+	db.test.sub.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	del db.test
+	db.test = shoji.Workspace()
+	assert "sub" not in db.test
+	with pytest.raises(AttributeError):
+		assert "Test" not in db.test.sub
+	assert "Test" not in db.test
+	db.test.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	db.test.sub = shoji.Workspace()
+	db.test.sub.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	del db.test
+

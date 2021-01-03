@@ -2,6 +2,7 @@ from typing import List, Union, Optional
 import fdb
 import shoji
 import pickle
+from .enums import Compartment
 
 
 """
@@ -36,7 +37,7 @@ def get_workspace(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 @fdb.transactional
 def get_dimension(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> Optional[shoji.Dimension]:
 	subdir = wsm._subdir
-	val = tr[subdir["dimensions"][name]]
+	val = tr[subdir[Compartment.Dimensions][name]]
 	if val.present():
 		dim = pickle.loads(val.value)
 		dim.name = name
@@ -48,7 +49,7 @@ def get_dimension(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 @fdb.transactional
 def get_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, include_initializing: bool = False) -> Optional[shoji.Tensor]:
 	subdir = wsm._subdir
-	val = tr[subdir.pack(("tensors", name))]
+	val = tr[subdir.pack((Compartment.Tensors, name))]
 	if val.present():
 		tensor = pickle.loads(val.value)
 		tensor.name = name
@@ -65,9 +66,9 @@ def list_workspaces(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager") -> 
 @fdb.transactional
 def list_dimensions(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager") -> List[shoji.Dimension]:
 	result = []
-	for kv in tr[wsm._subdir["dimensions"].range()]:
+	for kv in tr[wsm._subdir[Compartment.Dimensions].range()]:
 		dim = pickle.loads(kv.value)
-		dim.name = wsm._subdir["dimensions"].unpack(kv.key)[0]
+		dim.name = wsm._subdir[Compartment.Dimensions].unpack(kv.key)[0]
 		dim.wsm = wsm
 		result.append(dim)
 	return result
@@ -76,11 +77,11 @@ def list_dimensions(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager") -> 
 @fdb.transactional
 def list_tensors(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", include_initializing: bool = False) -> List[shoji.Tensor]:
 	result = []
-	for kv in tr[wsm._subdir["tensors"].range()]:
+	for kv in tr[wsm._subdir[Compartment.Tensors].range()]:
 		tensor = pickle.loads(kv.value)
 		if tensor.initializing and not include_initializing:
 			continue
-		tensor.name = wsm._subdir["tensors"].unpack(kv.key)[0]
+		tensor.name = wsm._subdir[Compartment.Tensors].unpack(kv.key)[0]
 		tensor.wsm = wsm
 		result.append(tensor)
 	return result
@@ -90,13 +91,15 @@ def list_tensors(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", includ
 def delete_entity(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> None:
 	subdir = wsm._subdir
 	if subdir.exists(tr, name):
+		tr.clear_range_startswith(subdir.key())
 		subdir.open(tr, name).remove(tr)
-	elif tr[subdir["dimensions"][name]].present():
-		tr.clear_range_startswith(subdir["dimensions"][name].key())
-	elif tr[subdir["tensors"][name]].present():
-		tr.clear_range_startswith(subdir["tensors"][name].key())
-		tr.clear_range_startswith(subdir["tensor_values"][name].key())
-		tr.clear_range_startswith(subdir["tensor_indexes"][name].key())
+	elif tr[subdir[Compartment.Dimensions][name]].present():
+		tr.clear_range_startswith(subdir[Compartment.Dimensions][name].key())
+	elif tr[subdir[Compartment.Tensors][name]].present():
+		tr.clear_range_startswith(subdir[Compartment.Tensors][name].key())
+		tr.clear_range_startswith(subdir[Compartment.TensorValues][name].key())
+		tr.clear_range_startswith(subdir[Compartment.TensorIndex][name].key())
+		tr.clear_range_startswith(subdir[Compartment.TensorRowShapes][name].key())
 
 
 @fdb.transactional
@@ -124,4 +127,4 @@ def create_dimension(tr, wsm: "shoji.WorkspaceManager", name: str, dim: shoji.Di
 			else:
 				dim.length = prev_dim.length
 	# Create or update the dimension
-	tr[subdir["dimensions"][name]] = pickle.dumps(dim)
+	tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim)

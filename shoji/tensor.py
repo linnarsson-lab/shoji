@@ -250,7 +250,7 @@ class TensorValue:
 			if self.dtype == "object":
 				self.dtype = "string"
 
-			shape: List[int] = list(values[0].shape)
+			shape = np.array(values[0].shape)
 			for i, array in enumerate(values):
 				if not isinstance(array, np.ndarray):
 					raise ValueError("Rows of jagged tensor must be numpy ndarrays")
@@ -263,10 +263,8 @@ class TensorValue:
 						raise TypeError("string tensors (numpy dtype='object') must contain only string elements")
 				if array.ndim != len(shape):
 					raise ValueError(f"Rank mismatch: shape {array.shape} of subarray at row {i} is not the same rank as shape {shape} at row 0")
-				for ix in range(len(shape)):
-					if shape[ix] != array.shape[ix]:
-						shape[ix] = 0
-			self.shape = tuple([len(values)] + shape)			
+				shape = np.maximum(shape, array.shape)
+			self.shape = tuple([len(values)] + list(shape))
 		else:
 			self.jagged = False
 			self.rank = values.ndim
@@ -316,9 +314,8 @@ class Tensor:
 		Args:
 			dtype:	string giving the datatype of the tensor elements
 			dims:	A tuple of None, int, string (empty tuple designates a scalar)
-			jagged: If true, create a jagged tensor
 			inits:	Optional values to initialize the tensor with
-			chunks: Tuple defining the chunk size along each dimension, or "auto" to use automatic chunking, or None to use old-style automatic chunking
+			chunks: Tuple defining the chunk size along each dimension, or "auto" to use automatic chunking
 			compressed: If true, use compression
 
 		Remarks:

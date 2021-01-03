@@ -42,6 +42,7 @@ view = ws.scRNA[ws.Age > 10, ws.Chromosome == "chr1"]
 from typing import Tuple, Callable, Union, List
 import shoji
 import shoji.io
+from shoji.io import Compartment
 import numpy as np
 
 
@@ -85,40 +86,15 @@ class View:
 		return result
 
 	def __getattr__(self, name: str) -> np.ndarray:
-		tensor = self.wsm._get_tensor(name)
-		indices = []
-		for i, dim in enumerate(tensor.dims):
-			if dim in self.filters:
-				indices.append(np.sort(self.filters[dim].get_rows(self.wsm)))
-			else:
-				indices.append(np.arange(tensor.shape[i]))
-		# Read the tensor (all or selected rows)
-		return shoji.io.read_at_indices(self.wsm, name, indices, tensor.chunks, tensor.compressed, False)
+		return shoji.io.read_filtered(self.wsm, name, self.filters.values())
 
 	def __getitem__(self, expr: Union[str, slice]) -> np.ndarray:
-		# Is it a slice? Return a slice of the view
 		if isinstance(expr, slice):
-			# if expr.start is None and expr.stop is None:
-			# 	return self
-			# elif len(self.filters) == 1:
-			# 	dim = next(self.filters.keys())
-			# 	return View(self.wsm, self.filters + (shoji.DimensionSliceFilter(dim, expr),))
-			# else:
 			raise KeyError("Cannot slice a view (not implemented)")
 		return self.__getattr__(expr)
 
 	def __setattr__(self, name: str, vals: Union[List[np.ndarray], np.ndarray]) -> None:
-		tensor: shoji.Tensor = self.wsm[name]
-		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a Tensor"
-		assert isinstance(vals, (np.ndarray, list, tuple)), f"Value assigned to '{name}' is not a numpy array or a list or tuple of numpy arrays"
-
-		indices = []
-		for i, dim in enumerate(tensor.dims):
-			if dim in self.filters:
-				indices.append(np.sort(self.filters[dim].get_rows(self.wsm)))
-			else:
-				indices.append(np.arange(tensor.shape[i]))
-		shoji.io.write_at_indices(self.wsm._db.transaction, self.wsm, ("tensor_values", name), indices, tensor.chunks, vals, tensor.compressed)
+		return shoji.io.write_filtered(self.wsm._db, self.wsm, name, vals, self.filters.values())
 
 	def __setitem__(self, name: str, vals: np.ndarray) -> None:
 		return self.__setattr__(name, vals)
