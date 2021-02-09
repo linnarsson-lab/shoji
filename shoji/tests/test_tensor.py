@@ -8,7 +8,7 @@ def test_create_tensor():
 	if "test" in db:
 		del db.test
 	db.test = shoji.Workspace()
-	db.test.Test = shoji.Tensor("uint32", (None,), inits=np.arange(100, dtype="uint32"))
+	db.test.Test = shoji.Tensor("uint32", (None,), chunks=(10,), inits=np.arange(100, dtype="uint32"))
 	assert np.all(db.test.Test[:] == np.arange(100, dtype="uint32"))
 	del db.test.Test
 	del db.test
@@ -18,13 +18,23 @@ def test_modify_tensor():
 	if "test" in db:
 		del db.test
 	db.test = shoji.Workspace()
-	db.test.Test = shoji.Tensor("uint32", (None,), inits=np.arange(100, dtype="uint32"))
+	db.test.Test = shoji.Tensor("uint32", (None,), chunks=(10,), inits=np.arange(100, dtype="uint32"))
 	db.test.Test[:10] = np.full(10, 91)
 	assert np.all(db.test.Test[:10] == np.full(10, 91, dtype="uint32"))
 	assert np.all(db.test.Test[10:] == np.arange(10, 100, dtype="uint32"))
 	del db.test.Test
 	del db.test
 
+
+def test_scalar():
+	db = shoji.connect()
+	if "test" in db:
+		del db.test
+	db.test = shoji.Workspace()
+	db.test.Test = shoji.Tensor("uint32", (), chunks=(), inits=np.array(100, dtype="uint32"))
+	assert db.test.Test[:] == np.array(100, dtype="uint32")
+	del db.test.Test
+	del db.test
 
 
 def test_read_at_indices():
@@ -34,7 +44,7 @@ def test_read_at_indices():
 	db.test = shoji.Workspace()
 	db.test.dim1 = shoji.Dimension(shape=1000)
 	db.test.dim2 = shoji.Dimension(shape=300)
-	db.test.Test = shoji.Tensor("float32", ("dim1", "dim2"), inits=np.arange(300_000, dtype="float32").reshape(1000,300))
+	db.test.Test = shoji.Tensor("float32", ("dim1", "dim2"), chunks=(100,100), inits=np.arange(300_000, dtype="float32").reshape(1000,300))
 	db.test.Test[0:1000:100, 0:300:100] = np.full((100, 3), 91, dtype="float32")
 	del db.test.Test
 	del db.test
@@ -47,8 +57,8 @@ def test_append():
 	db.test = shoji.Workspace()
 	db.test.dim1 = shoji.Dimension(shape=1000)
 	db.test.dim2 = shoji.Dimension(shape=None)
-	db.test.Test1 = shoji.Tensor("float32", ("dim1", "dim2"), inits=np.arange(300_000, dtype="float32").reshape(1000, 300))
-	db.test.Test2 = shoji.Tensor("int16", ("dim2", "dim1"), inits=np.arange(300_000, dtype="int16").reshape(300, 1000))
+	db.test.Test1 = shoji.Tensor("float32", ("dim1", "dim2"), chunks=(100,100), inits=np.arange(300_000, dtype="float32").reshape(1000, 300))
+	db.test.Test2 = shoji.Tensor("int16", ("dim2", "dim1"), chunks=(100,100), inits=np.arange(300_000, dtype="int16").reshape(300, 1000))
 	with pytest.raises(AssertionError):
 		db.test.dim1.append({
 			"Test1": np.zeros((100, 300)),
@@ -63,6 +73,10 @@ def test_append():
 		"Test1": np.zeros((1000, 200)),
 		"Test2": np.zeros((200, 1000))
 	})
+	db.test.Test3 = shoji.Tensor("uint8", ("dim2",))  # Add a tensor with no inits, length should be zero
+	db.test.dim2.append({  # This should work, because it will bring Test3 to the correct length along dim2
+		"Test3": np.zeros(500, dtype="uint8")
+	})
 	del db.test.Test
 	del db.test
 
@@ -74,7 +88,7 @@ def test_jagged():
 	db.test = shoji.Workspace()
 	db.test.dim1 = shoji.Dimension(shape=10)
 	inits = [np.arange(x * 4, dtype="float32").reshape(x, 4) for x in range(1, 11)]
-	db.test.Test = shoji.Tensor("float32", ("dim1", None, 4), inits=inits, jagged=True)
+	db.test.Test = shoji.Tensor("float32", ("dim1", None, 4), chunks=(1, 10, 4), inits=inits, jagged=True)
 	assert isinstance(db.test.Test[:], list)
 	assert all(np.all(a == b) for a,b in zip(inits, db.test.Test[:]))
 	del db.test.Test
@@ -87,7 +101,8 @@ def test_filter():
 		del db.test
 	db.test = shoji.Workspace()
 	db.test.dim1 = shoji.Dimension(shape=10)
-	db.test.Test = shoji.Tensor("float32", ("dim1",), inits=np.arange(10, dtype="float32"))
+	db.test.Test = shoji.Tensor("float32", ("dim1",), chunks=(1,), inits=np.arange(10, dtype="float32"))
 	assert np.all(db.test.Test[db.test.Test > 2] == np.arange(3, 10, dtype="float32"))
 	del db.test.Test
 	del db.test
+

@@ -75,14 +75,14 @@ class View:
 		indices = []
 		for i, dim in enumerate(tensor.dims):
 			if dim in self.filters:
-				indices = self.filters[dim].get_rows(self.wsm)
+				indices.append(self.filters[dim].get_rows(self.wsm))
 			else:
-				indices = np.arange(tensor.shape[i])
+				indices.append(np.arange(tensor.shape[i]))
 			if i == 0:
-				indices[-1] = indices[-1][start:end]
+				indices[0] = indices[0][start:end]
 
 		# Read the tensor (selected rows)
-		result = shoji.io.read_at_indices(self.wsm, tensor.name, indices, tensor.chunks, tensor.compressed, False)
+		result = shoji.io.read_at_indices(self.wsm, tensor.name, indices, tensor.chunks, False)
 		return result
 
 	def __getattr__(self, name: str) -> np.ndarray:

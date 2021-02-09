@@ -61,11 +61,11 @@ def read_filtered(wsm: "shoji.WorkspaceManager", name: str, filters: List["shoji
 			indices = [np.array([row])]
 			for axis in range(1, tensor.rank):
 				indices.append(get_filtered_indices(wsm, tensor, filters, axis, row_shape[axis - 1]))
-			result.append(shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, tensor.compressed, False))
+			result.append(shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, False))
 		return result
 	else:
 		indices = [get_filtered_indices(wsm, tensor, filters, i, tensor.shape[i]) for i in range(tensor.rank)]
-		return shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, tensor.compressed, False)
+		return shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, False)
 
 
 @fdb.transactional
@@ -81,7 +81,7 @@ def write_filtered(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name
 			indices = [np.array([row])]
 			for axis in range(1, tensor.rank):
 				indices.append(get_filtered_indices(wsm, tensor, filters, axis, row_shape[axis - 1]))
-			shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals[row], tensor.compressed)
+			shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals[row])
 	else:
 		indices = [get_filtered_indices(wsm, tensor, filters, i, tensor.shape[i]) for i in range(tensor.rank)]
-		shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals, tensor.compressed)
+		shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals)

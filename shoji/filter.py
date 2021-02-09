@@ -2,20 +2,33 @@
 
 ## Using filters
 
-Filters are expressions used to select tensor rows, for reading or writing to the database.
+Filters are expressions used to select tensor rows, columns, etc., for reading or writing to the database.
 Filters can be applied to a workspace, dimension or tensor using the slicing expression `[]`.
 
 ### Applying filters to tensors
 
-Filtering on a tensor selects rows of that tensor, returning a `numpy.ndarray`:
+Filtering on a tensor selects a subtensor by filtering along each dimension, returning a `numpy.ndarray`:
 
 ```python
 vals = ws.scRNA.Age[ws.scRNA.Tissue == "Cortex"]
 # Returns those rows of Age where Tissue equals "Cortex"
 ```
 
+Filters applied to a tensor must match tensor dimensions. For example, if a tensor is defined
+on ("cells", "genes"), then the first filter expression must run along the "cells" dimension
+and the second filter expression along the "genes" dimension. If a filter expression is not
+given for a dimension, then all indices along that dimension are included in the result. If you 
+want to omit dimensions in the middle, use ellipsis:
+
+```python
+vals = ws.images.ImageStack[10:20, ..., 90:100]
+# Returns indices 10 to 20 along dimension 1, all indices along dimension 2, and 90:100 along dimension 3.
+```
+
+### Writing through a filter (view)
+
 Assigning values (which must be a `numpy.ndarray` of the right shape and `dtype`) to a 
-filtered tensor causes the corresponding tensor rows in the database to be updated:
+filtered tensor causes the corresponding tensor elements in the database to be updated:
 
 ```python
 vals = np.array(...)  # A numpy array of the right shape and dtype
@@ -108,8 +121,7 @@ You can use lists, tuples or np.ndarrays of integers to select rows on dimension
 
 ```python
 ws = db.cancer_project
-indices = ...  # An np.ndarray of integers designating the desired rows
-view = ws.samples[indices]
+view = ws.samples[(0, 1, 2, 3, 10, 20, 21)]
 ```
 
 
@@ -119,8 +131,7 @@ You can use lists, tuples or np.ndarrays of bools to select rows on dimensions a
 
 ```python
 ws = db.cancer_project
-selected = ...  # An np.ndarray of bools designating the desired rows
-view = ws.samples[selected]
+view = ws.samples[(True, False, False, True, False)]
 ```
 
 
@@ -421,8 +432,8 @@ class TensorBoolFilter(Filter):
 		if n_rows is None:
 			n_rows = self.tensor.shape[self.axis]
 
-		if self.selected.shape[self.axis] != n_rows:
-			raise IndexError(f"Boolean array used for fancy indexing along axis {self.axis} of '{self.tensor.name}' has {self.selected.shape[self.axis]} elements but tensor length is {n_rows}")
+		if self.selected.shape[0] != n_rows:
+			raise IndexError(f"Boolean array used for fancy indexing along axis {self.axis} of '{self.tensor.name}' has {self.selected.shape[0]} elements but tensor length is {n_rows}")
 		return np.where(self.selected)[0]
 
 	def __repr__(self) -> str:

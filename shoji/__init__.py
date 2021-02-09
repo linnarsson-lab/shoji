@@ -23,54 +23,53 @@ Oh, and it's pretty fast.
 
 In Shoji, data is stored as tensors, and relationships are expressed using shared dimensions. 
 
-The atomic unit of data storage in Shoji is the *row* (and its generalization to N dimensions). 
-Data is added to tensors by rows; columns cannot be added or removed. 
-
 Dimensions can be named, and named dimensions express relationships and constraints between tensors.
 Tensors that share a named dimension must have the same length along that dimension (and this relationship
-is enforced when adding or removing rows).
+is enforced when adding data).
 
 You can think of rows as your data *objects*, dimensions as object *types*, and the tensors as object
-*attributes*. For example, a set of vectors (e.g. `SampleID`, `Age`, `Tissue`, `Date`) defined on a `samples` dimension could be seen as the attributes
-of samples, and an individual sample would correspond to an individual row across all tensors.
+*attributes*. For example, a set of vectors (e.g. `SampleID`, `Age`, `Tissue`, `Date`) defined on a 
+`samples` dimension could be seen as the attributes of samples, and an individual sample would correspond
+to an individual row across all tensors.
 
 Tensors can also be related to multiple named dimensions. For example, omics data (e.g. gene expression)
 is often represented as matrices, which can be represented in Shoji as rank-2 tensors with two named
 dimensions, e.g. `cells` and `genes`. Metadata about cells and genes would be stored as rank-1 tensors
-(vectors) along the `cells` and `genes` dimensions, respectively. 
-
-Similarly, multichannel timelapse image data can be represented as high-rank tensors with dimensions
-such as `x`, `y`, `channel`, and `timepoint`.
+(vectors) along the `cells` and `genes` dimensions, respectively. Similarly, multichannel timelapse 
+image data can be represented as high-rank tensors with dimensions
+such as `x`, `y`, `channel`, and `timepoint`. This makes Shoji fundamentally
+different from tabular (relational) databases, which struggle to represent multidimensional data.
 
 The fundamental operations in shoji are: *creating a tensor*, *appending values*, *reading values*, 
 *updating values*.
 
 ### ACID guarantees
 
-Shoji treats the *row* as the atomic unit when writing data. This means that if your program crashes in the
-middle of an operation, you are guaranteed that there will be no half-created rows in the database.
+Shoji treats the *slice* as the atomic unit when writing data. This means that if your program crashes in the
+middle of an operation, you are guaranteed that there will be no half-created rows, or partially
+updated elements in the database.
 
 When more than one tensor shares their first dimension, the atomic unit for writing new data (i.e. for
-`shoji.dimension.Dimension.append`) is one row across all tensors that share the same first dimension.
+`shoji.dimension.Dimension.append`) is a slice across all tensors that share the same first dimension.
 In other words, if your program crashes in the middle of an `append()` operation, shoji guarantees
-that some number of complete rows (or nothing at all) will have been written across all the relevant tensors, 
+that some number of complete indices (or nothing at all) will have been written across all the relevant tensors, 
 ensuring that they stay in sync.
 
 If you need stronger guarantees, you can wrap multiple database operations in a `shoji.transaction`.
 
 ### Limitations
 
-Shoji is build on [FoundationDB](https://www.foundationdb.org), a powerful open-source key-value store
+Shoji is built on [FoundationDB](https://www.foundationdb.org), a powerful open-source key-value store
 developed by [Apple](https://www.apple.com). It is FoundationDB that gives Shoji a solid foundation 
 of performance, scalability and ACID guarantees. In order to gain these features, there are a few limitations
 though:
 
 * Transactions cannot exceed 5 seconds. If a transaction takes longer, it's terminated and rolled back.
-For Shoji, this limits the total feasible size of a row (or a set of rows for append operations), since
-Shoji reads and writes rows transactionally. 
+For Shoji, this limits the total feasible size of a slice (or a set of rows for append operations), since
+Shoji reads and writes slices transactionally. 
 
 * Transactions exceeding 1 MB can cause performance issues, and transactions cannot exceed 10 MB. This
-also limits the total feasible size of a tensor row, since Shoji reads and writes rows transactionally
+also limits the total feasible size of a tensor slice, since Shoji reads and writes slices transactionally
 to ensure consistency.
 
 * FoundationDB is optimized to run on SSDs. Running on mechanical disks is discouraged.
@@ -87,7 +86,8 @@ Shoji requires Python 3.7+ (we recommend [Anaconda](https://www.anaconda.com/pro
 First, in your terminal, install the shoji Python package:
 
 ```shell
-$ pip install shoji
+$ git clone https://github.com/linnarsson-lab/shoji.git
+$ pip install -e shoji
 ```
 
 Next, install [FoundationDB](https://apple.github.io/foundationdb/getting-started-mac.html) (or ask your 
@@ -176,4 +176,3 @@ from .filter import Filter, CompoundFilter, TensorFilter, ConstFilter, Dimension
 from .transaction import Transaction
 from .groupby import GroupViewBy, GroupDimensionBy
 from .view import View
-from .export_import import export

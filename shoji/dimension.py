@@ -37,8 +37,8 @@ db.scRNA.cells.append({
 })
 ```
 
-Note that if you leave out one of the tensors (of the ones that have `"samples"` as their first
-dimension), or supply data of inconsistent shape, the append method will raise an exception.
+Note that if you leave out one of the tensors (of the ones that have `"cells"` as one of their
+dimensions), or supply data of inconsistent shape, the append method will raise an exception.
 
 Appending data using this method is guaranteed to never fail with a partial row written (but may not
 complete all the rows successfully), and will never leave the database in an inconsistent state 
@@ -55,7 +55,14 @@ class Dimension:
 	"""
 	Class representing a named dimension, which can be shared by multiple `shoji.tensor.Tensor`s
 	"""
-	def __init__(self, *, shape: Optional[int], length: int = 0) -> None:
+	def __init__(self, shape: Optional[int], length: int = 0) -> None:
+		"""
+		Create a new Dimension
+
+		Args:
+			shape		An integer, or None to create a variable-length dimension
+			length		(do not use when creating a new Dimension)
+		"""
 		if shape == -1:
 			shape = None
 		if shape is not None and shape < 0:

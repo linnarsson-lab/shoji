@@ -64,17 +64,17 @@ def test_delete_workspace_with_contents():
 	if "test" in db:
 		del db.test
 	db.test = shoji.Workspace()
-	db.test.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	db.test.Test = shoji.Tensor("string", (None,), chunks=(10,), inits=np.array(["Hello", "You"], dtype=object))
 	db.test.sub = shoji.Workspace()
-	db.test.sub.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	db.test.sub.Test = shoji.Tensor("string", (None,), chunks=(10,), inits=np.array(["Hello", "You"], dtype=object))
 	del db.test
 	db.test = shoji.Workspace()
 	assert "sub" not in db.test
 	with pytest.raises(AttributeError):
 		assert "Test" not in db.test.sub
 	assert "Test" not in db.test
-	db.test.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	db.test.Test = shoji.Tensor("string", (None,), chunks=(10,), inits=np.array(["Hello", "You"], dtype=object))
 	db.test.sub = shoji.Workspace()
-	db.test.sub.Test = shoji.Tensor("string", (None,), np.array(["Hello", "You"], dtype=object))
+	db.test.sub.Test = shoji.Tensor("string", (None,), chunks=(10,), inits=np.array(["Hello", "You"], dtype=object))
 	del db.test
 

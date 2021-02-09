@@ -54,6 +54,8 @@ def get_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: st
 		tensor = pickle.loads(val.value)
 		tensor.name = name
 		tensor.wsm = wsm
+		if tensor.initializing and not include_initializing:
+			return None
 		return tensor
 	return None
 
