@@ -3,6 +3,7 @@ import numpy as np
 import fdb
 import shoji
 import pickle
+import logging
 from .enums import Compartment
 
 
@@ -371,16 +372,18 @@ def append_values_multibatch(wsm: "shoji.WorkspaceManager", tensors: List[str], 
 		while ensuring that the same number of (generalized) rows are appended to each tensor
 		in each transaction.
 
-		For each batch (transaction), the validity of appending values will be validated, to
+		For each batch (transaction), the validity of appending values will be re-validated, to
 		ensure safe concurrency
 	"""
-	n = values[0].shape[axes[0]]  # Start by attempting to append everything
-	n_total = n
+	n_total = values[0].shape[axes[0]]
+	total_bytes = sum([val.size_in_bytes() for val in values])
+	n = int(max(1, 10_000_000 // (total_bytes // n_total)))
 	total_bytes_written = 0
 	n_bytes_written = 0
 	ix = 0
 	max_retries = 3
 	while ix < n_total:
+		# logging.info(f"Appending values to {tensors} with {n} rows per batch and at {ix}")
 		try:
 			# Slice the values along the appending axis, without making copies (as np.take would do)
 			batches = []

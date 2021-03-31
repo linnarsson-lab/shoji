@@ -1,3 +1,24 @@
+"""
+Grouping tensors and applying aggregations.
+
+The available aggregation methods are
+
+	sum
+
+	count
+
+	nnz (number of non-zero elements)
+
+	mean
+
+	variance
+
+	sd (standard deviation)
+
+	skewness
+
+	kurtosis
+"""
 from typing import Dict, Union, Callable, Optional
 import numpy as np
 from sklearn.preprocessing import LabelEncoder

@@ -49,6 +49,20 @@ ws.Chromosome = shoji.Tensor(&quot;string&quot;, (&quot;genes&quot;,))
 # Slice both dimensions:
 view = ws.scRNA[ws.Age &gt; 10, ws.Chromosome == &quot;chr1&quot;]
 </code></pre>
+<h2 id="grouping">Grouping</h2>
+<p>Calling <code>.groupby(labels)</code> on a view creates a <code><a title="shoji.groupby.GroupViewBy" href="groupby.html#shoji.groupby.GroupViewBy">GroupViewBy</a></code> object.
+The <code>labels</code> should be the name of a tensor which is used to group the view.
+Calling an aggregation function such as <code>mean()</code> then returns the view but with
+all elements that share the same value of the <code>label</code> replaced by their mean.</p>
+<p>For example, suppose you have an Expression tensor with dimensions ("genes", "cells") and
+a ClusterID tensor with dimension ("cells",). Suppose there are 10 distinct values of
+ClusterID. The following code will return an np.ndarray of shape ("genes", 10) containing
+mean values for each ClusterID:</p>
+<pre><code class="python">grouped = ws[:].groupby(&quot;ClusterID&quot;)
+(labels, values) = grouped.mean(&quot;Expression&quot;)
+# labels is a list of distinct ClusterID values
+# values is a np.ndarray where the &quot;cells&quot; dimension is replaced by the distinct cluster IDs
+</code></pre>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -92,42 +106,38 @@ ws.Chromosome = shoji.Tensor(&#34;string&#34;, (&#34;genes&#34;,))
 view = ws.scRNA[ws.Age &gt; 10, ws.Chromosome == &#34;chr1&#34;]
 ```
 
+## Grouping
 
+Calling `.groupby(labels)` on a view creates a `shoji.groupby.GroupViewBy` object. 
+The `labels` should be the name of a tensor which is used to group the view.
+Calling an aggregation function such as `mean()` then returns the view but with
+all elements that share the same value of the `label` replaced by their mean.
+
+For example, suppose you have an Expression tensor with dimensions (&#34;genes&#34;, &#34;cells&#34;) and
+a ClusterID tensor with dimension (&#34;cells&#34;,). Suppose there are 10 distinct values of
+ClusterID. The following code will return an np.ndarray of shape (&#34;genes&#34;, 10) containing 
+mean values for each ClusterID:
+
+```python
+grouped = ws[:].groupby(&#34;ClusterID&#34;)
+(labels, values) = grouped.mean(&#34;Expression&#34;)
+# labels is a list of distinct ClusterID values
+# values is a np.ndarray where the &#34;cells&#34; dimension is replaced by the distinct cluster IDs
+```
 
 
 &#34;&#34;&#34;
-from typing import Tuple, Callable, Union
+from typing import Tuple, Callable, Union, List
 import shoji
+import shoji.io
+from shoji.io import Compartment
 import numpy as np
-import xarray as xr
-import logging
 
 
 class View:
         def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter, ...]) -&gt; None:
                 super().__setattr__(&#34;filters&#34;, {f.dim: f for f in filters})
                 super().__setattr__(&#34;wsm&#34;, wsm)
-        
-        def xarray(self, *, tensors: Tuple[str, ...] = None) -&gt; xr:
-                &#34;&#34;&#34;
-                Return the whole view as an in-memory `xarray.Dataset` object with named dimensions
-
-                Args:
-                        tensors:        The tensors to include in the xarray, or None to include all
-                
-                Remarks:
-                        All tensors in the view are loaded into the xarray Dataset, with the exception
-                        of jagged tensors, which are not supported by xarray.
-                &#34;&#34;&#34;
-                variables = {}
-                for t in self.wsm._tensors():
-                        if tensors is not None and t not in tensors:
-                                continue
-                        tensor = self.wsm._get_tensor(t)
-                        if tensor.jagged:
-                                continue
-                        variables[t] = (tensor.dims, self[t])
-                return xr.Dataset(variables)
 
         def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -&gt; shoji.GroupViewBy:
                 return shoji.GroupViewBy(self, labels, projection)
@@ -138,78 +148,41 @@ class View:
                 else:
                         return self.wsm._get_dimension(dim).length
 
-        def _read_chunk(self, name: str, start: int, end: int) -&gt; np.ndarray:
-                # Get the tensor
-                tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
+        def get_shape(self, tensor: shoji.Tensor) -&gt; Tuple[int, ...]:
+                shape = []
+                for i, dim in enumerate(tensor.dims):
+                        if isinstance(dim, str):
+                                shape.append(self.get_length(dim))
+                        else:
+                                shape.append(tensor.shape[i])
+                return tuple(shape)
 
-                if tensor.rank &gt; 0 and tensor.dims[0] in self.filters:
-                        indices = self.filters[tensor.dims[0]].get_rows(self.wsm)[start: end]
-                else:
-                        indices = np.arange(start, end)
+        def _read_batch(self, tensor: shoji.Tensor, start: int, end: int) -&gt; np.ndarray:
+                if tensor.jagged:
+                        raise ValueError(f&#34;Cannot read batches of jagged tensor &#39;{tensor.name}&#39;&#34;)
+                indices = []
+                for i, dim in enumerate(tensor.dims):
+                        if dim in self.filters:
+                                indices.append(self.filters[dim].get_rows(self.wsm))
+                        else:
+                                indices.append(np.arange(tensor.shape[i]))
+                        if i == 0:
+                                indices[0] = indices[0][start:end]
 
                 # Read the tensor (selected rows)
-                result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
-                # Filter the remaining dimensions
-                for i, dim in enumerate(tensor.dims):
-                        if i == 0:
-                                continue
-                        if isinstance(dim, str) and dim in self.filters:
-                                # Filter this dimension
-                                indices = self.filters[dim].get_rows(self.wsm)
-                                result = result.take(indices, axis=i)
+                result = shoji.io.read_at_indices(self.wsm, tensor.name, indices, tensor.chunks, False)
                 return result
 
         def __getattr__(self, name: str) -&gt; np.ndarray:
-                # Get the tensor
-                tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
-
-                indices = None
-                if tensor.rank &gt; 0 and tensor.dims[0] in self.filters:
-                        indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
-                # Read the tensor (all or selected rows)
-                result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
-                # Filter the remaining dimensions
-                for i, dim in enumerate(tensor.dims):
-                        if i == 0:
-                                continue
-                        if isinstance(dim, str) and dim in self.filters:
-                                # Filter this dimension
-                                indices = self.filters[dim].get_rows(self.wsm)
-                                result = result.take(indices, axis=i)
-                return result
+                return shoji.io.read_filtered(self.wsm, name, self.filters.values())
 
         def __getitem__(self, expr: Union[str, slice]) -&gt; np.ndarray:
-                # Is it a slice? Return a slice of the view
                 if isinstance(expr, slice):
-                        if expr.start is None and expr.stop is None:
-                                return self
-                        elif len(self.filters) == 1:
-                                dim = next(self.filters.keys())
-                                return View(self.wsm, self.filters + (shoji.DimensionSliceFilter(dim, expr),))
-                        else:
-                                raise KeyError(&#34;Cannot slice a view unless it&#39;s filtered on exactly one dimension&#34;)
+                        raise KeyError(&#34;Cannot slice a view (not implemented)&#34;)
                 return self.__getattr__(expr)
 
-        def __setattr__(self, name: str, vals: np.ndarray) -&gt; None:
-                tensor: shoji.Tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
-                assert isinstance(vals, (np.ndarray, list, tuple)), f&#34;Value assigned to &#39;{name}&#39; is not a numpy array or a list or tuple of numpy arrays&#34;
-
-                for i, dim in enumerate(tensor.dims):
-                        if i == 0:
-                                continue
-                        if dim in self.filters:
-                                raise IndexError(&#34;Cannot write to view filtered non non-first tensor dimension&#34;)
-                if tensor.rank == 0:
-                        indices = np.array([0], dtype=&#34;int32&#34;)
-                elif tensor.dims[0] in self.filters:
-                        indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
-                else:
-                        indices = np.arange(tensor.shape[0])
-                tv = shoji.TensorValue(vals)
-                shoji.io.write_tensor_values(self.wsm._db.transaction, self.wsm, name, tv, indices)
+        def __setattr__(self, name: str, vals: Union[List[np.ndarray], np.ndarray]) -&gt; None:
+                return shoji.io.write_filtered(self.wsm._db, self.wsm, name, vals, self.filters.values())
 
         def __setitem__(self, name: str, vals: np.ndarray) -&gt; None:
                 return self.__setattr__(name, vals)</code></pre>
@@ -238,27 +211,6 @@ class View:
         def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter, ...]) -&gt; None:
                 super().__setattr__(&#34;filters&#34;, {f.dim: f for f in filters})
                 super().__setattr__(&#34;wsm&#34;, wsm)
-        
-        def xarray(self, *, tensors: Tuple[str, ...] = None) -&gt; xr:
-                &#34;&#34;&#34;
-                Return the whole view as an in-memory `xarray.Dataset` object with named dimensions
-
-                Args:
-                        tensors:        The tensors to include in the xarray, or None to include all
-                
-                Remarks:
-                        All tensors in the view are loaded into the xarray Dataset, with the exception
-                        of jagged tensors, which are not supported by xarray.
-                &#34;&#34;&#34;
-                variables = {}
-                for t in self.wsm._tensors():
-                        if tensors is not None and t not in tensors:
-                                continue
-                        tensor = self.wsm._get_tensor(t)
-                        if tensor.jagged:
-                                continue
-                        variables[t] = (tensor.dims, self[t])
-                return xr.Dataset(variables)
 
         def groupby(self, labels: Union[str, np.ndarray], projection: Callable = None) -&gt; shoji.GroupViewBy:
                 return shoji.GroupViewBy(self, labels, projection)
@@ -269,78 +221,41 @@ class View:
                 else:
                         return self.wsm._get_dimension(dim).length
 
-        def _read_chunk(self, name: str, start: int, end: int) -&gt; np.ndarray:
-                # Get the tensor
-                tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
+        def get_shape(self, tensor: shoji.Tensor) -&gt; Tuple[int, ...]:
+                shape = []
+                for i, dim in enumerate(tensor.dims):
+                        if isinstance(dim, str):
+                                shape.append(self.get_length(dim))
+                        else:
+                                shape.append(tensor.shape[i])
+                return tuple(shape)
 
-                if tensor.rank &gt; 0 and tensor.dims[0] in self.filters:
-                        indices = self.filters[tensor.dims[0]].get_rows(self.wsm)[start: end]
-                else:
-                        indices = np.arange(start, end)
+        def _read_batch(self, tensor: shoji.Tensor, start: int, end: int) -&gt; np.ndarray:
+                if tensor.jagged:
+                        raise ValueError(f&#34;Cannot read batches of jagged tensor &#39;{tensor.name}&#39;&#34;)
+                indices = []
+                for i, dim in enumerate(tensor.dims):
+                        if dim in self.filters:
+                                indices.append(self.filters[dim].get_rows(self.wsm))
+                        else:
+                                indices.append(np.arange(tensor.shape[i]))
+                        if i == 0:
+                                indices[0] = indices[0][start:end]
 
                 # Read the tensor (selected rows)
-                result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
-                # Filter the remaining dimensions
-                for i, dim in enumerate(tensor.dims):
-                        if i == 0:
-                                continue
-                        if isinstance(dim, str) and dim in self.filters:
-                                # Filter this dimension
-                                indices = self.filters[dim].get_rows(self.wsm)
-                                result = result.take(indices, axis=i)
+                result = shoji.io.read_at_indices(self.wsm, tensor.name, indices, tensor.chunks, False)
                 return result
 
         def __getattr__(self, name: str) -&gt; np.ndarray:
-                # Get the tensor
-                tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
-
-                indices = None
-                if tensor.rank &gt; 0 and tensor.dims[0] in self.filters:
-                        indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
-                # Read the tensor (all or selected rows)
-                result = shoji.io.read_tensor_values(self.wsm._db.transaction, self.wsm, name, tensor, indices)
-                # Filter the remaining dimensions
-                for i, dim in enumerate(tensor.dims):
-                        if i == 0:
-                                continue
-                        if isinstance(dim, str) and dim in self.filters:
-                                # Filter this dimension
-                                indices = self.filters[dim].get_rows(self.wsm)
-                                result = result.take(indices, axis=i)
-                return result
+                return shoji.io.read_filtered(self.wsm, name, self.filters.values())
 
         def __getitem__(self, expr: Union[str, slice]) -&gt; np.ndarray:
-                # Is it a slice? Return a slice of the view
                 if isinstance(expr, slice):
-                        if expr.start is None and expr.stop is None:
-                                return self
-                        elif len(self.filters) == 1:
-                                dim = next(self.filters.keys())
-                                return View(self.wsm, self.filters + (shoji.DimensionSliceFilter(dim, expr),))
-                        else:
-                                raise KeyError(&#34;Cannot slice a view unless it&#39;s filtered on exactly one dimension&#34;)
+                        raise KeyError(&#34;Cannot slice a view (not implemented)&#34;)
                 return self.__getattr__(expr)
 
-        def __setattr__(self, name: str, vals: np.ndarray) -&gt; None:
-                tensor: shoji.Tensor = self.wsm[name]
-                assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a Tensor&#34;
-                assert isinstance(vals, (np.ndarray, list, tuple)), f&#34;Value assigned to &#39;{name}&#39; is not a numpy array or a list or tuple of numpy arrays&#34;
-
-                for i, dim in enumerate(tensor.dims):
-                        if i == 0:
-                                continue
-                        if dim in self.filters:
-                                raise IndexError(&#34;Cannot write to view filtered non non-first tensor dimension&#34;)
-                if tensor.rank == 0:
-                        indices = np.array([0], dtype=&#34;int32&#34;)
-                elif tensor.dims[0] in self.filters:
-                        indices = self.filters[tensor.dims[0]].get_rows(self.wsm)
-                else:
-                        indices = np.arange(tensor.shape[0])
-                tv = shoji.TensorValue(vals)
-                shoji.io.write_tensor_values(self.wsm._db.transaction, self.wsm, name, tv, indices)
+        def __setattr__(self, name: str, vals: Union[List[np.ndarray], np.ndarray]) -&gt; None:
+                return shoji.io.write_filtered(self.wsm._db, self.wsm, name, vals, self.filters.values())
 
         def __setitem__(self, name: str, vals: np.ndarray) -&gt; None:
                 return self.__setattr__(name, vals)</code></pre>
@@ -363,6 +278,25 @@ class View:
                 return self.wsm._get_dimension(dim).length</code></pre>
 </details>
 </dd>
+<dt id="shoji.view.View.get_shape"><code class="name flex">
+<span>def <span class="ident">get_shape</span></span>(<span>self, tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>) ‑> Tuple[int, ...]</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_shape(self, tensor: shoji.Tensor) -&gt; Tuple[int, ...]:
+        shape = []
+        for i, dim in enumerate(tensor.dims):
+                if isinstance(dim, str):
+                        shape.append(self.get_length(dim))
+                else:
+                        shape.append(tensor.shape[i])
+        return tuple(shape)</code></pre>
+</details>
+</dd>
 <dt id="shoji.view.View.groupby"><code class="name flex">
 <span>def <span class="ident">groupby</span></span>(<span>self, labels: Union[str, numpy.ndarray], projection: Callable = None) ‑> <a title="shoji.groupby.GroupViewBy" href="groupby.html#shoji.groupby.GroupViewBy">GroupViewBy</a></span>
 </code></dt>
@@ -376,47 +310,6 @@ class View:
         return shoji.GroupViewBy(self, labels, projection)</code></pre>
 </details>
 </dd>
-<dt id="shoji.view.View.xarray"><code class="name flex">
-<span>def <span class="ident">xarray</span></span>(<span>self, *, tensors: Tuple[str, ...] = None) ‑> <module 'xarray' from '/Users/stelin/anaconda.2020.07/lib/python3.8/site-packages/xarray/__init__.py'></span>
-</code></dt>
-<dd>
-<div class="desc"><p>Return the whole view as an in-memory <code>xarray.Dataset</code> object with named dimensions</p>
-<h2 id="args">Args</h2>
-<dl>
-<dt><strong><code>tensors</code></strong></dt>
-<dd>
-<p>The tensors to include in the xarray, or None to include all</p>
-</dd>
-</dl>
-<h2 id="remarks">Remarks</h2>
-<p>All tensors in the view are loaded into the xarray Dataset, with the exception
-of jagged tensors, which are not supported by xarray.</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def xarray(self, *, tensors: Tuple[str, ...] = None) -&gt; xr:
-        &#34;&#34;&#34;
-        Return the whole view as an in-memory `xarray.Dataset` object with named dimensions
-
-        Args:
-                tensors:        The tensors to include in the xarray, or None to include all
-        
-        Remarks:
-                All tensors in the view are loaded into the xarray Dataset, with the exception
-                of jagged tensors, which are not supported by xarray.
-        &#34;&#34;&#34;
-        variables = {}
-        for t in self.wsm._tensors():
-                if tensors is not None and t not in tensors:
-                        continue
-                tensor = self.wsm._get_tensor(t)
-                if tensor.jagged:
-                        continue
-                variables[t] = (tensor.dims, self[t])
-        return xr.Dataset(variables)</code></pre>
-</details>
-</dd>
 </dl>
 </dd>
 </dl>
@@ -425,7 +318,9 @@ of jagged tensors, which are not supported by xarray.</p></div>
 <nav id="sidebar">
 <h1>Index</h1>
 <div class="toc">
-<ul></ul>
+<ul>
+<li><a href="#grouping">Grouping</a></li>
+</ul>
 </div>
 <ul id="index">
 <li><h3>Super-module</h3>
@@ -439,8 +334,8 @@ of jagged tensors, which are not supported by xarray.</p></div>
 <h4><code><a title="shoji.view.View" href="#shoji.view.View">View</a></code></h4>
 <ul class="">
 <li><code><a title="shoji.view.View.get_length" href="#shoji.view.View.get_length">get_length</a></code></li>
+<li><code><a title="shoji.view.View.get_shape" href="#shoji.view.View.get_shape">get_shape</a></code></li>
 <li><code><a title="shoji.view.View.groupby" href="#shoji.view.View.groupby">groupby</a></code></li>
-<li><code><a title="shoji.view.View.xarray" href="#shoji.view.View.xarray">xarray</a></code></li>
 </ul>
 </li>
 </ul>

@@ -23,15 +23,24 @@
 </header>
 <section id="section-intro">
 <h2 id="using-filters">Using filters</h2>
-<p>Filters are expressions used to select tensor rows, for reading or writing to the database.
+<p>Filters are expressions used to select tensor rows, columns, etc., for reading or writing to the database.
 Filters can be applied to a workspace, dimension or tensor using the slicing expression <code>[]</code>.</p>
 <h3 id="applying-filters-to-tensors">Applying filters to tensors</h3>
-<p>Filtering on a tensor selects rows of that tensor, returning a <code>numpy.ndarray</code>:</p>
+<p>Filtering on a tensor selects a subtensor by filtering along each dimension, returning a <code>numpy.ndarray</code>:</p>
 <pre><code class="python">vals = ws.scRNA.Age[ws.scRNA.Tissue == &quot;Cortex&quot;]
 # Returns those rows of Age where Tissue equals &quot;Cortex&quot;
 </code></pre>
+<p>Filters applied to a tensor must match tensor dimensions. For example, if a tensor is defined
+on ("cells", "genes"), then the first filter expression must run along the "cells" dimension
+and the second filter expression along the "genes" dimension. If a filter expression is not
+given for a dimension, then all indices along that dimension are included in the result. If you
+want to omit dimensions in the middle, use ellipsis:</p>
+<pre><code class="python">vals = ws.images.ImageStack[10:20, ..., 90:100]
+# Returns indices 10 to 20 along dimension 1, all indices along dimension 2, and 90:100 along dimension 3.
+</code></pre>
+<h3 id="writing-through-a-filter-view">Writing through a filter (view)</h3>
 <p>Assigning values (which must be a <code>numpy.ndarray</code> of the right shape and <code>dtype</code>) to a
-filtered tensor causes the corresponding tensor rows in the database to be updated:</p>
+filtered tensor causes the corresponding tensor elements in the database to be updated:</p>
 <pre><code class="python">vals = np.array(...)  # A numpy array of the right shape and dtype
 ws.scRNA.Age[ws.scRNA.Tissue == &quot;Cortex&quot;] = vals
 # Those rows of Age where Tissue equals &quot;Cortex&quot; are updated
@@ -87,14 +96,12 @@ view = ws.samples[3:10]  # Create a view along the 'samples' dimension including
 <h3 id="index-arrays">Index arrays</h3>
 <p>You can use lists, tuples or np.ndarrays of integers to select rows on dimensions and tensors (but not on workspaces):</p>
 <pre><code class="python">ws = db.cancer_project
-indices = ...  # An np.ndarray of integers designating the desired rows
-view = ws.samples[indices]
+view = ws.samples[(0, 1, 2, 3, 10, 20, 21)]
 </code></pre>
 <h3 id="boolean-arrays">Boolean arrays</h3>
 <p>You can use lists, tuples or np.ndarrays of bools to select rows on dimensions and tensors (but not on workspaces):</p>
 <pre><code class="python">ws = db.cancer_project
-selected = ...  # An np.ndarray of bools designating the desired rows
-view = ws.samples[selected]
+view = ws.samples[(True, False, False, True, False)]
 </code></pre>
 <h3 id="compound-filters">Compound filters</h3>
 <p>You can combine filters using <code>&amp;</code> (and), <code>|</code> (or), <code>~</code> (not), <code>^</code> (xor), and <code>-</code> (set difference). </p>
@@ -112,20 +119,33 @@ those selected by the right-hand expression.</p>
 
 ## Using filters
 
-Filters are expressions used to select tensor rows, for reading or writing to the database.
+Filters are expressions used to select tensor rows, columns, etc., for reading or writing to the database.
 Filters can be applied to a workspace, dimension or tensor using the slicing expression `[]`.
 
 ### Applying filters to tensors
 
-Filtering on a tensor selects rows of that tensor, returning a `numpy.ndarray`:
+Filtering on a tensor selects a subtensor by filtering along each dimension, returning a `numpy.ndarray`:
 
 ```python
 vals = ws.scRNA.Age[ws.scRNA.Tissue == &#34;Cortex&#34;]
 # Returns those rows of Age where Tissue equals &#34;Cortex&#34;
 ```
 
+Filters applied to a tensor must match tensor dimensions. For example, if a tensor is defined
+on (&#34;cells&#34;, &#34;genes&#34;), then the first filter expression must run along the &#34;cells&#34; dimension
+and the second filter expression along the &#34;genes&#34; dimension. If a filter expression is not
+given for a dimension, then all indices along that dimension are included in the result. If you 
+want to omit dimensions in the middle, use ellipsis:
+
+```python
+vals = ws.images.ImageStack[10:20, ..., 90:100]
+# Returns indices 10 to 20 along dimension 1, all indices along dimension 2, and 90:100 along dimension 3.
+```
+
+### Writing through a filter (view)
+
 Assigning values (which must be a `numpy.ndarray` of the right shape and `dtype`) to a 
-filtered tensor causes the corresponding tensor rows in the database to be updated:
+filtered tensor causes the corresponding tensor elements in the database to be updated:
 
 ```python
 vals = np.array(...)  # A numpy array of the right shape and dtype
@@ -218,8 +238,7 @@ You can use lists, tuples or np.ndarrays of integers to select rows on dimension
 
 ```python
 ws = db.cancer_project
-indices = ...  # An np.ndarray of integers designating the desired rows
-view = ws.samples[indices]
+view = ws.samples[(0, 1, 2, 3, 10, 20, 21)]
 ```
 
 
@@ -229,8 +248,7 @@ You can use lists, tuples or np.ndarrays of bools to select rows on dimensions a
 
 ```python
 ws = db.cancer_project
-selected = ...  # An np.ndarray of bools designating the desired rows
-view = ws.samples[selected]
+view = ws.samples[(True, False, False, True, False)]
 ```
 
 
@@ -475,54 +493,64 @@ class DimensionBoolFilter(Filter):
 
 
 class TensorSliceFilter(Filter):
-        def __init__(self, tensor: shoji.Tensor, slice_: slice) -&gt; None:
-                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+        def __init__(self, tensor: shoji.Tensor, slice_: slice, axis: int) -&gt; None:
+                self.dim = tensor.dims[axis] if tensor.rank &gt; 0 else None
                 self.tensor = tensor
                 self.slice_ = slice_
+                self.axis = axis
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.tensor.shape[0])
+                raise NotImplementedError()
 
-        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                s = self.slice_.indices(self.tensor.shape[0])
+        def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+                if n_rows is None:
+                        n_rows = self.tensor.shape[self.axis]
+                s = self.slice_.indices(n_rows)
                 return np.arange(s[0], s[1], s[2])
 
         def __repr__(self) -&gt; str:
-                s = self.slice_.indices(self.tensor.shape[0])
+                s = self.slice_.indices(self.tensor.shape[self.axis])
                 return f&#34;({self.tensor.name}[{s[0]}:{s[1]}:{s[2]}])&#34;
 
 
 class TensorIndicesFilter(Filter):
-        def __init__(self, tensor: shoji.Tensor, indices: np.ndarray) -&gt; None:
-                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+        def __init__(self, tensor: shoji.Tensor, indices: np.ndarray, axis: int) -&gt; None:
+                self.axis = axis
+                self.dim = tensor.dims[axis] if tensor.rank &gt; 0 else None
                 self.tensor = tensor
                 self.indices = indices
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.tensor.shape[0])
+                raise NotImplementedError()
 
-        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[0]
-                if not np.all(self.indices &lt; len(self.tensor)):
+        def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+                if n_rows is None:
+                        n_rows = self.tensor.shape[self.axis]
+                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[self.axis]
+                if not np.all(self.indices &lt; n_rows):
                         raise IndexError(&#34;Index out of range&#34;)
-                return self.indices[self.indices &lt; self.tensor.shape[0]]
+                return self.indices[self.indices &lt; n_rows]
 
         def __repr__(self) -&gt; str:
                 return f&#34;({self.tensor.name}[{self.indices}])&#34;
 
 
 class TensorBoolFilter(Filter):
-        def __init__(self, tensor: shoji.Tensor, selected: np.ndarray) -&gt; None:
-                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+        def __init__(self, tensor: shoji.Tensor, selected: np.ndarray, axis: int) -&gt; None:
+                self.axis = axis
+                self.dim = tensor.dims[axis] if tensor.rank &gt; 0 else None
                 self.tensor = tensor
                 self.selected = selected
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.tensor.shape[0])
+                raise NotImplementedError()
 
-        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                if self.selected.shape[0] != self.tensor.shape[0]:
-                        raise IndexError(f&#34;Boolean array used for fancy indexing along first dimension of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}&#34;)
+        def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+                if n_rows is None:
+                        n_rows = self.tensor.shape[self.axis]
+
+                if self.selected.shape[0] != n_rows:
+                        raise IndexError(f&#34;Boolean array used for fancy indexing along axis {self.axis} of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {n_rows}&#34;)
                 return np.where(self.selected)[0]
 
         def __repr__(self) -&gt; str:
@@ -1018,7 +1046,7 @@ class TensorBoolFilter(Filter):
 </dd>
 <dt id="shoji.filter.TensorBoolFilter"><code class="flex name class">
 <span>class <span class="ident">TensorBoolFilter</span></span>
-<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, selected: numpy.ndarray)</span>
+<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, selected: numpy.ndarray, axis: int)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -1027,17 +1055,21 @@ class TensorBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class TensorBoolFilter(Filter):
-        def __init__(self, tensor: shoji.Tensor, selected: np.ndarray) -&gt; None:
-                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+        def __init__(self, tensor: shoji.Tensor, selected: np.ndarray, axis: int) -&gt; None:
+                self.axis = axis
+                self.dim = tensor.dims[axis] if tensor.rank &gt; 0 else None
                 self.tensor = tensor
                 self.selected = selected
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.tensor.shape[0])
+                raise NotImplementedError()
 
-        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                if self.selected.shape[0] != self.tensor.shape[0]:
-                        raise IndexError(f&#34;Boolean array used for fancy indexing along first dimension of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}&#34;)
+        def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+                if n_rows is None:
+                        n_rows = self.tensor.shape[self.axis]
+
+                if self.selected.shape[0] != n_rows:
+                        raise IndexError(f&#34;Boolean array used for fancy indexing along axis {self.axis} of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {n_rows}&#34;)
                 return np.where(self.selected)[0]
 
         def __repr__(self) -&gt; str:
@@ -1059,11 +1091,11 @@ class TensorBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        return np.arange(self.tensor.shape[0])</code></pre>
+        raise NotImplementedError()</code></pre>
 </details>
 </dd>
 <dt id="shoji.filter.TensorBoolFilter.get_rows"><code class="name flex">
-<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) ‑> numpy.ndarray</span>
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, n_rows: int = None) ‑> numpy.ndarray</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -1071,9 +1103,12 @@ class TensorBoolFilter(Filter):
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        if self.selected.shape[0] != self.tensor.shape[0]:
-                raise IndexError(f&#34;Boolean array used for fancy indexing along first dimension of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {self.tensor.shape[0]}&#34;)
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+        if n_rows is None:
+                n_rows = self.tensor.shape[self.axis]
+
+        if self.selected.shape[0] != n_rows:
+                raise IndexError(f&#34;Boolean array used for fancy indexing along axis {self.axis} of &#39;{self.tensor.name}&#39; has {self.selected.shape[0]} elements but tensor length is {n_rows}&#34;)
         return np.where(self.selected)[0]</code></pre>
 </details>
 </dd>
@@ -1162,7 +1197,7 @@ class TensorBoolFilter(Filter):
 </dd>
 <dt id="shoji.filter.TensorIndicesFilter"><code class="flex name class">
 <span>class <span class="ident">TensorIndicesFilter</span></span>
-<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, indices: numpy.ndarray)</span>
+<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, indices: numpy.ndarray, axis: int)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -1171,19 +1206,22 @@ class TensorBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class TensorIndicesFilter(Filter):
-        def __init__(self, tensor: shoji.Tensor, indices: np.ndarray) -&gt; None:
-                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+        def __init__(self, tensor: shoji.Tensor, indices: np.ndarray, axis: int) -&gt; None:
+                self.axis = axis
+                self.dim = tensor.dims[axis] if tensor.rank &gt; 0 else None
                 self.tensor = tensor
                 self.indices = indices
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.tensor.shape[0])
+                raise NotImplementedError()
 
-        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[0]
-                if not np.all(self.indices &lt; len(self.tensor)):
+        def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+                if n_rows is None:
+                        n_rows = self.tensor.shape[self.axis]
+                self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[self.axis]
+                if not np.all(self.indices &lt; n_rows):
                         raise IndexError(&#34;Index out of range&#34;)
-                return self.indices[self.indices &lt; self.tensor.shape[0]]
+                return self.indices[self.indices &lt; n_rows]
 
         def __repr__(self) -&gt; str:
                 return f&#34;({self.tensor.name}[{self.indices}])&#34;</code></pre>
@@ -1204,11 +1242,11 @@ class TensorBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        return np.arange(self.tensor.shape[0])</code></pre>
+        raise NotImplementedError()</code></pre>
 </details>
 </dd>
 <dt id="shoji.filter.TensorIndicesFilter.get_rows"><code class="name flex">
-<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) ‑> numpy.ndarray</span>
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, n_rows: int = None) ‑> numpy.ndarray</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -1216,18 +1254,20 @@ class TensorBoolFilter(Filter):
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[0]
-        if not np.all(self.indices &lt; len(self.tensor)):
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+        if n_rows is None:
+                n_rows = self.tensor.shape[self.axis]
+        self.indices[self.indices &lt; 0] = self.indices[self.indices &lt; 0] + self.tensor.shape[self.axis]
+        if not np.all(self.indices &lt; n_rows):
                 raise IndexError(&#34;Index out of range&#34;)
-        return self.indices[self.indices &lt; self.tensor.shape[0]]</code></pre>
+        return self.indices[self.indices &lt; n_rows]</code></pre>
 </details>
 </dd>
 </dl>
 </dd>
 <dt id="shoji.filter.TensorSliceFilter"><code class="flex name class">
 <span>class <span class="ident">TensorSliceFilter</span></span>
-<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, slice_: slice)</span>
+<span>(</span><span>tensor: <a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a>, slice_: slice, axis: int)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -1236,20 +1276,23 @@ class TensorBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class TensorSliceFilter(Filter):
-        def __init__(self, tensor: shoji.Tensor, slice_: slice) -&gt; None:
-                self.dim = tensor.dims[0] if tensor.rank &gt; 0 else None
+        def __init__(self, tensor: shoji.Tensor, slice_: slice, axis: int) -&gt; None:
+                self.dim = tensor.dims[axis] if tensor.rank &gt; 0 else None
                 self.tensor = tensor
                 self.slice_ = slice_
+                self.axis = axis
 
         def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                return np.arange(self.tensor.shape[0])
+                raise NotImplementedError()
 
-        def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-                s = self.slice_.indices(self.tensor.shape[0])
+        def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+                if n_rows is None:
+                        n_rows = self.tensor.shape[self.axis]
+                s = self.slice_.indices(n_rows)
                 return np.arange(s[0], s[1], s[2])
 
         def __repr__(self) -&gt; str:
-                s = self.slice_.indices(self.tensor.shape[0])
+                s = self.slice_.indices(self.tensor.shape[self.axis])
                 return f&#34;({self.tensor.name}[{s[0]}:{s[1]}:{s[2]}])&#34;</code></pre>
 </details>
 <h3>Ancestors</h3>
@@ -1268,11 +1311,11 @@ class TensorBoolFilter(Filter):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def get_all_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        return np.arange(self.tensor.shape[0])</code></pre>
+        raise NotImplementedError()</code></pre>
 </details>
 </dd>
 <dt id="shoji.filter.TensorSliceFilter.get_rows"><code class="name flex">
-<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>) ‑> numpy.ndarray</span>
+<span>def <span class="ident">get_rows</span></span>(<span>self, wsm: <a title="shoji.workspace.WorkspaceManager" href="workspace.html#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, n_rows: int = None) ‑> numpy.ndarray</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -1280,8 +1323,10 @@ class TensorBoolFilter(Filter):
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager) -&gt; np.ndarray:
-        s = self.slice_.indices(self.tensor.shape[0])
+<pre><code class="python">def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -&gt; np.ndarray:
+        if n_rows is None:
+                n_rows = self.tensor.shape[self.axis]
+        s = self.slice_.indices(n_rows)
         return np.arange(s[0], s[1], s[2])</code></pre>
 </details>
 </dd>
@@ -1296,6 +1341,7 @@ class TensorBoolFilter(Filter):
 <ul>
 <li><a href="#using-filters">Using filters</a><ul>
 <li><a href="#applying-filters-to-tensors">Applying filters to tensors</a></li>
+<li><a href="#writing-through-a-filter-view">Writing through a filter (view)</a></li>
 <li><a href="#applying-filters-to-dimensions">Applying filters to dimensions</a></li>
 <li><a href="#applying-filters-to-workspaces">Applying filters to workspaces</a></li>
 </ul>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
 <meta name="generator" content="pdoc 0.8.4" />
 <title>shoji.groupby API documentation</title>
-<meta name="description" content="" />
+<meta name="description" content="Grouping tensors and applying aggregations …" />
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
 <link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
 <link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/styles/github.min.css" crossorigin>
@@ -22,11 +22,50 @@
 <h1 class="title">Module <code>shoji.groupby</code></h1>
 </header>
 <section id="section-intro">
+<p>Grouping tensors and applying aggregations.</p>
+<p>The available aggregation methods are</p>
+<pre><code>    sum
+
+    count
+
+    nnz (number of non-zero elements)
+
+    mean
+
+    variance
+
+    sd (standard deviation)
+
+    skewness
+
+    kurtosis
+</code></pre>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">from typing import Dict, Union, Callable, Tuple, Optional
+<pre><code class="python">&#34;&#34;&#34;
+Grouping tensors and applying aggregations.
+
+The available aggregation methods are
+
+        sum
+
+        count
+
+        nnz (number of non-zero elements)
+
+        mean
+
+        variance
+
+        sd (standard deviation)
+
+        skewness
+
+        kurtosis
+&#34;&#34;&#34;
+from typing import Dict, Union, Callable, Optional
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 import shoji
@@ -46,12 +85,13 @@ class Accumulator:
                 self._m2 = None
                 self._m3 = None
                 self._m4 = None
+                self._first = None
 
         def add(self, x):
                 if self._count is None:
                         self._sum = x.astype(&#34;float64&#34;)
-                        self._count = np.ones_like(self._sum)
-                        self._nnz = np.zeros_like(self._sum)
+                        self._count = np.ones_like(self._sum, dtype=&#34;uint64&#34;)
+                        self._nnz = np.zeros_like(self._sum, dtype=&#34;uint64&#34;)
                         self._nnz[x &gt; 0] += 1
                         self._min = x.astype(&#34;float64&#34;)
                         self._max = x.astype(&#34;float64&#34;)
@@ -59,12 +99,13 @@ class Accumulator:
                         self._m2 = np.zeros_like(self._mean)
                         self._m3 = np.zeros_like(self._mean)
                         self._m4 = np.zeros_like(self._mean)
+                        self._first = x
                 else:
-                        self._nnz[x &gt; 0] += 1
+                        self._nnz[x &gt; 0] = np.add(self._nnz[x &gt; 0], 1, casting=&#34;unsafe&#34;)  # This convoluted scheme is needed to avoid error when adding 1 to a scalar array
                         self._sum += x
                         self._min = np.minimum(self._min, x)
                         self._max = np.maximum(self._min, x)
-                        self._count += 1
+                        np.add(self._count, 1, out=self._count, casting=&#34;unsafe&#34;)  # Same issue as above, but at least here we can do it in-place
                         n = self._count
                         delta = x - self._mean
                         delta_n = delta / n
@@ -74,6 +115,10 @@ class Accumulator:
                         self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
                         self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
                         self._m2 = self._m2 + term
+
+        @property
+        def first(self):
+                return self._first
 
         @property
         def count(self):
@@ -134,6 +179,12 @@ class GroupAccumulator:
                         return np.array(list(x.keys())), np.array(list(x.values()))
                 return self.groups[label].count
 
+        def first(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.first for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].first
+
         def mean(self, label = None) -&gt; np.ndarray:
                 if label is None:
                         x = {label: x.mean for label, x in self.groups.items()}
@@ -166,14 +217,13 @@ class GroupAccumulator:
 
 
 class GroupViewBy:
-        def __init__(self, view: &#34;shoji.view.View&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -&gt; None:
+        def __init__(self, view: &#34;shoji.view.View&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None) -&gt; None:
                 self.view = view
                 self.labels = labels
                 if isinstance(self.labels, str):
                         tensor = view.wsm._get_tensor(self.labels)
                         if tensor.rank != 1:
                                 raise ValueError(f&#34;Cannot groupby(&#39;{self.labels}&#39;); a rank-1 tensor is required&#34;)
-                self.chunk_size = chunk_size
                 self.projection = projection
                 self.acc: Optional[GroupAccumulator] = None
 
@@ -181,6 +231,8 @@ class GroupViewBy:
                 if self.acc is not None:
                         return self.acc
                 tensor = self.view.wsm._get_tensor(of_tensor)
+                if tensor.jagged:
+                        raise NotImplementedError(&#34;Cannot group jagged tensor&#34;)
                 n_rows = self.view.get_length(tensor.dims[0])
                 if self.labels is None:
                         label_values = np.zeros(n_rows)
@@ -193,11 +245,13 @@ class GroupViewBy:
                 le = LabelEncoder()
                 labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
                 acc = GroupAccumulator()
-                for ix in range(0, n_rows, self.chunk_size):
-                        chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
-                        chunk_labels = labels[ix: ix + self.chunk_size]
-                        for i, label in enumerate(chunk_labels):
-                                acc.add(le.classes_[label], chunk[i])
+
+                n_rows_per_batch = 1000
+                for ix in range(0, n_rows, n_rows_per_batch):
+                        batch = self.view._read_batch(tensor, ix, ix + n_rows_per_batch)
+                        batch_labels = labels[ix: ix + n_rows_per_batch]
+                        for i, label in enumerate(batch_labels):
+                                acc.add(le.classes_[label], batch[i])
                 return acc
 
         def sum(self, of_tensor: str) -&gt; np.ndarray:
@@ -205,6 +259,9 @@ class GroupViewBy:
 
         def count(self, of_tensor: str) -&gt; np.ndarray:
                 return self.stats(of_tensor).count()
+
+        def first(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).first()
 
         def nnz(self, of_tensor: str) -&gt; np.ndarray:
                 return self.stats(of_tensor).nnz()
@@ -253,12 +310,15 @@ class GroupDimensionBy:
                         label_values = [self.projection(x) for x in  label_values]
                 labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
                 acc = GroupAccumulator()
-                for ix in range(0, self.dim.length, self.chunk_size):
-                        chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
-                        chunk_labels = labels[ix: ix + self.chunk_size]
-                        for i, label in enumerate(chunk_labels):
-                                acc.add(le.classes_[label], chunk[i])
+                n_rows = self.dim.length
+                n_rows_per_batch = 1000
+                for ix in range(0, n_rows, n_rows_per_batch):
+                        batch = self.dim.wsm._get_tensor(of_tensor)[ix: ix + n_rows_per_batch]
+                        batch_labels = labels[ix: ix + n_rows_per_batch]
+                        for i, label in enumerate(batch_labels):
+                                acc.add(le.classes_[label], batch[i])
                 return acc
+
 
         def sum(self, of_tensor: str) -&gt; np.ndarray:
                 return self.stats(of_tensor).sum()
@@ -314,12 +374,13 @@ class GroupDimensionBy:
                 self._m2 = None
                 self._m3 = None
                 self._m4 = None
+                self._first = None
 
         def add(self, x):
                 if self._count is None:
                         self._sum = x.astype(&#34;float64&#34;)
-                        self._count = np.ones_like(self._sum)
-                        self._nnz = np.zeros_like(self._sum)
+                        self._count = np.ones_like(self._sum, dtype=&#34;uint64&#34;)
+                        self._nnz = np.zeros_like(self._sum, dtype=&#34;uint64&#34;)
                         self._nnz[x &gt; 0] += 1
                         self._min = x.astype(&#34;float64&#34;)
                         self._max = x.astype(&#34;float64&#34;)
@@ -327,12 +388,13 @@ class GroupDimensionBy:
                         self._m2 = np.zeros_like(self._mean)
                         self._m3 = np.zeros_like(self._mean)
                         self._m4 = np.zeros_like(self._mean)
+                        self._first = x
                 else:
-                        self._nnz[x &gt; 0] += 1
+                        self._nnz[x &gt; 0] = np.add(self._nnz[x &gt; 0], 1, casting=&#34;unsafe&#34;)  # This convoluted scheme is needed to avoid error when adding 1 to a scalar array
                         self._sum += x
                         self._min = np.minimum(self._min, x)
                         self._max = np.maximum(self._min, x)
-                        self._count += 1
+                        np.add(self._count, 1, out=self._count, casting=&#34;unsafe&#34;)  # Same issue as above, but at least here we can do it in-place
                         n = self._count
                         delta = x - self._mean
                         delta_n = delta / n
@@ -342,6 +404,10 @@ class GroupDimensionBy:
                         self._m4 = (self._m4 + term * delta_n2 * (n ** 2 - 3 * n + 3) + 6 * delta_n2 * self._m2 - 4 * delta_n * self._m3)
                         self._m3 = (self._m3 + term * delta_n * (n - 2) - 3 * delta_n * self._m2)
                         self._m2 = self._m2 + term
+
+        @property
+        def first(self):
+                return self._first
 
         @property
         def count(self):
@@ -388,6 +454,18 @@ class GroupDimensionBy:
 <pre><code class="python">@property
 def count(self):
         return self._count</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.Accumulator.first"><code class="name">var <span class="ident">first</span></code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@property
+def first(self):
+        return self._first</code></pre>
 </details>
 </dd>
 <dt id="shoji.groupby.Accumulator.kurtosis"><code class="name">var <span class="ident">kurtosis</span></code></dt>
@@ -490,8 +568,8 @@ def variance(self):
 <pre><code class="python">def add(self, x):
         if self._count is None:
                 self._sum = x.astype(&#34;float64&#34;)
-                self._count = np.ones_like(self._sum)
-                self._nnz = np.zeros_like(self._sum)
+                self._count = np.ones_like(self._sum, dtype=&#34;uint64&#34;)
+                self._nnz = np.zeros_like(self._sum, dtype=&#34;uint64&#34;)
                 self._nnz[x &gt; 0] += 1
                 self._min = x.astype(&#34;float64&#34;)
                 self._max = x.astype(&#34;float64&#34;)
@@ -499,12 +577,13 @@ def variance(self):
                 self._m2 = np.zeros_like(self._mean)
                 self._m3 = np.zeros_like(self._mean)
                 self._m4 = np.zeros_like(self._mean)
+                self._first = x
         else:
-                self._nnz[x &gt; 0] += 1
+                self._nnz[x &gt; 0] = np.add(self._nnz[x &gt; 0], 1, casting=&#34;unsafe&#34;)  # This convoluted scheme is needed to avoid error when adding 1 to a scalar array
                 self._sum += x
                 self._min = np.minimum(self._min, x)
                 self._max = np.maximum(self._min, x)
-                self._count += 1
+                np.add(self._count, 1, out=self._count, casting=&#34;unsafe&#34;)  # Same issue as above, but at least here we can do it in-place
                 n = self._count
                 delta = x - self._mean
                 delta_n = delta / n
@@ -551,6 +630,12 @@ def variance(self):
                         x = {label: x.count for label, x in self.groups.items()}
                         return np.array(list(x.keys())), np.array(list(x.values()))
                 return self.groups[label].count
+
+        def first(self, label = None) -&gt; np.ndarray:
+                if label is None:
+                        x = {label: x.first for label, x in self.groups.items()}
+                        return np.array(list(x.keys())), np.array(list(x.values()))
+                return self.groups[label].first
 
         def mean(self, label = None) -&gt; np.ndarray:
                 if label is None:
@@ -611,6 +696,22 @@ def variance(self):
                 x = {label: x.count for label, x in self.groups.items()}
                 return np.array(list(x.keys())), np.array(list(x.values()))
         return self.groups[label].count</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupAccumulator.first"><code class="name flex">
+<span>def <span class="ident">first</span></span>(<span>self, label=None) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def first(self, label = None) -&gt; np.ndarray:
+        if label is None:
+                x = {label: x.first for label, x in self.groups.items()}
+                return np.array(list(x.keys())), np.array(list(x.values()))
+        return self.groups[label].first</code></pre>
 </details>
 </dd>
 <dt id="shoji.groupby.GroupAccumulator.kurtosis"><code class="name flex">
@@ -765,12 +866,15 @@ def variance(self):
                         label_values = [self.projection(x) for x in  label_values]
                 labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
                 acc = GroupAccumulator()
-                for ix in range(0, self.dim.length, self.chunk_size):
-                        chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
-                        chunk_labels = labels[ix: ix + self.chunk_size]
-                        for i, label in enumerate(chunk_labels):
-                                acc.add(le.classes_[label], chunk[i])
+                n_rows = self.dim.length
+                n_rows_per_batch = 1000
+                for ix in range(0, n_rows, n_rows_per_batch):
+                        batch = self.dim.wsm._get_tensor(of_tensor)[ix: ix + n_rows_per_batch]
+                        batch_labels = labels[ix: ix + n_rows_per_batch]
+                        for i, label in enumerate(batch_labels):
+                                acc.add(le.classes_[label], batch[i])
                 return acc
+
 
         def sum(self, of_tensor: str) -&gt; np.ndarray:
                 return self.stats(of_tensor).sum()
@@ -900,11 +1004,13 @@ def variance(self):
                 label_values = [self.projection(x) for x in  label_values]
         labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
         acc = GroupAccumulator()
-        for ix in range(0, self.dim.length, self.chunk_size):
-                chunk = self.dim.wsm[of_tensor][ix: ix + self.chunk_size]
-                chunk_labels = labels[ix: ix + self.chunk_size]
-                for i, label in enumerate(chunk_labels):
-                        acc.add(le.classes_[label], chunk[i])
+        n_rows = self.dim.length
+        n_rows_per_batch = 1000
+        for ix in range(0, n_rows, n_rows_per_batch):
+                batch = self.dim.wsm._get_tensor(of_tensor)[ix: ix + n_rows_per_batch]
+                batch_labels = labels[ix: ix + n_rows_per_batch]
+                for i, label in enumerate(batch_labels):
+                        acc.add(le.classes_[label], batch[i])
         return acc</code></pre>
 </details>
 </dd>
@@ -938,7 +1044,7 @@ def variance(self):
 </dd>
 <dt id="shoji.groupby.GroupViewBy"><code class="flex name class">
 <span>class <span class="ident">GroupViewBy</span></span>
-<span>(</span><span>view: <a title="shoji.view.View" href="view.html#shoji.view.View">View</a>, labels: Union[str, numpy.ndarray, NoneType], projection: Callable = None, chunk_size: int = 1000)</span>
+<span>(</span><span>view: <a title="shoji.view.View" href="view.html#shoji.view.View">View</a>, labels: Union[str, numpy.ndarray, NoneType], projection: Callable = None)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -947,14 +1053,13 @@ def variance(self):
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class GroupViewBy:
-        def __init__(self, view: &#34;shoji.view.View&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None, chunk_size: int = 1000) -&gt; None:
+        def __init__(self, view: &#34;shoji.view.View&#34;, labels: Optional[Union[str, np.ndarray]], projection: Callable = None) -&gt; None:
                 self.view = view
                 self.labels = labels
                 if isinstance(self.labels, str):
                         tensor = view.wsm._get_tensor(self.labels)
                         if tensor.rank != 1:
                                 raise ValueError(f&#34;Cannot groupby(&#39;{self.labels}&#39;); a rank-1 tensor is required&#34;)
-                self.chunk_size = chunk_size
                 self.projection = projection
                 self.acc: Optional[GroupAccumulator] = None
 
@@ -962,6 +1067,8 @@ def variance(self):
                 if self.acc is not None:
                         return self.acc
                 tensor = self.view.wsm._get_tensor(of_tensor)
+                if tensor.jagged:
+                        raise NotImplementedError(&#34;Cannot group jagged tensor&#34;)
                 n_rows = self.view.get_length(tensor.dims[0])
                 if self.labels is None:
                         label_values = np.zeros(n_rows)
@@ -974,11 +1081,13 @@ def variance(self):
                 le = LabelEncoder()
                 labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
                 acc = GroupAccumulator()
-                for ix in range(0, n_rows, self.chunk_size):
-                        chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
-                        chunk_labels = labels[ix: ix + self.chunk_size]
-                        for i, label in enumerate(chunk_labels):
-                                acc.add(le.classes_[label], chunk[i])
+
+                n_rows_per_batch = 1000
+                for ix in range(0, n_rows, n_rows_per_batch):
+                        batch = self.view._read_batch(tensor, ix, ix + n_rows_per_batch)
+                        batch_labels = labels[ix: ix + n_rows_per_batch]
+                        for i, label in enumerate(batch_labels):
+                                acc.add(le.classes_[label], batch[i])
                 return acc
 
         def sum(self, of_tensor: str) -&gt; np.ndarray:
@@ -986,6 +1095,9 @@ def variance(self):
 
         def count(self, of_tensor: str) -&gt; np.ndarray:
                 return self.stats(of_tensor).count()
+
+        def first(self, of_tensor: str) -&gt; np.ndarray:
+                return self.stats(of_tensor).first()
 
         def nnz(self, of_tensor: str) -&gt; np.ndarray:
                 return self.stats(of_tensor).nnz()
@@ -1018,6 +1130,19 @@ def variance(self):
 </summary>
 <pre><code class="python">def count(self, of_tensor: str) -&gt; np.ndarray:
         return self.stats(of_tensor).count()</code></pre>
+</details>
+</dd>
+<dt id="shoji.groupby.GroupViewBy.first"><code class="name flex">
+<span>def <span class="ident">first</span></span>(<span>self, of_tensor: str) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def first(self, of_tensor: str) -&gt; np.ndarray:
+        return self.stats(of_tensor).first()</code></pre>
 </details>
 </dd>
 <dt id="shoji.groupby.GroupViewBy.kurtosis"><code class="name flex">
@@ -1098,6 +1223,8 @@ def variance(self):
         if self.acc is not None:
                 return self.acc
         tensor = self.view.wsm._get_tensor(of_tensor)
+        if tensor.jagged:
+                raise NotImplementedError(&#34;Cannot group jagged tensor&#34;)
         n_rows = self.view.get_length(tensor.dims[0])
         if self.labels is None:
                 label_values = np.zeros(n_rows)
@@ -1110,11 +1237,13 @@ def variance(self):
         le = LabelEncoder()
         labels = le.fit_transform(label_values)  # Encode string labels and non-contiguous integers into integers 0, 1, 2, ...
         acc = GroupAccumulator()
-        for ix in range(0, n_rows, self.chunk_size):
-                chunk = self.view._read_chunk(of_tensor, ix, ix + self.chunk_size)
-                chunk_labels = labels[ix: ix + self.chunk_size]
-                for i, label in enumerate(chunk_labels):
-                        acc.add(le.classes_[label], chunk[i])
+
+        n_rows_per_batch = 1000
+        for ix in range(0, n_rows, n_rows_per_batch):
+                batch = self.view._read_batch(tensor, ix, ix + n_rows_per_batch)
+                batch_labels = labels[ix: ix + n_rows_per_batch]
+                for i, label in enumerate(batch_labels):
+                        acc.add(le.classes_[label], batch[i])
         return acc</code></pre>
 </details>
 </dd>
@@ -1167,6 +1296,7 @@ def variance(self):
 <ul class="two-column">
 <li><code><a title="shoji.groupby.Accumulator.add" href="#shoji.groupby.Accumulator.add">add</a></code></li>
 <li><code><a title="shoji.groupby.Accumulator.count" href="#shoji.groupby.Accumulator.count">count</a></code></li>
+<li><code><a title="shoji.groupby.Accumulator.first" href="#shoji.groupby.Accumulator.first">first</a></code></li>
 <li><code><a title="shoji.groupby.Accumulator.kurtosis" href="#shoji.groupby.Accumulator.kurtosis">kurtosis</a></code></li>
 <li><code><a title="shoji.groupby.Accumulator.mean" href="#shoji.groupby.Accumulator.mean">mean</a></code></li>
 <li><code><a title="shoji.groupby.Accumulator.nnz" href="#shoji.groupby.Accumulator.nnz">nnz</a></code></li>
@@ -1181,6 +1311,7 @@ def variance(self):
 <ul class="two-column">
 <li><code><a title="shoji.groupby.GroupAccumulator.add" href="#shoji.groupby.GroupAccumulator.add">add</a></code></li>
 <li><code><a title="shoji.groupby.GroupAccumulator.count" href="#shoji.groupby.GroupAccumulator.count">count</a></code></li>
+<li><code><a title="shoji.groupby.GroupAccumulator.first" href="#shoji.groupby.GroupAccumulator.first">first</a></code></li>
 <li><code><a title="shoji.groupby.GroupAccumulator.kurtosis" href="#shoji.groupby.GroupAccumulator.kurtosis">kurtosis</a></code></li>
 <li><code><a title="shoji.groupby.GroupAccumulator.mean" href="#shoji.groupby.GroupAccumulator.mean">mean</a></code></li>
 <li><code><a title="shoji.groupby.GroupAccumulator.nnz" href="#shoji.groupby.GroupAccumulator.nnz">nnz</a></code></li>
@@ -1208,6 +1339,7 @@ def variance(self):
 <h4><code><a title="shoji.groupby.GroupViewBy" href="#shoji.groupby.GroupViewBy">GroupViewBy</a></code></h4>
 <ul class="two-column">
 <li><code><a title="shoji.groupby.GroupViewBy.count" href="#shoji.groupby.GroupViewBy.count">count</a></code></li>
+<li><code><a title="shoji.groupby.GroupViewBy.first" href="#shoji.groupby.GroupViewBy.first">first</a></code></li>
 <li><code><a title="shoji.groupby.GroupViewBy.kurtosis" href="#shoji.groupby.GroupViewBy.kurtosis">kurtosis</a></code></li>
 <li><code><a title="shoji.groupby.GroupViewBy.mean" href="#shoji.groupby.GroupViewBy.mean">mean</a></code></li>
 <li><code><a title="shoji.groupby.GroupViewBy.nnz" href="#shoji.groupby.GroupViewBy.nnz">nnz</a></code></li>

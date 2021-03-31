@@ -72,6 +72,22 @@ workspace. This allows you to create nested workspaces:</p>
 <pre><code class="python">db.scRNA = shoji.Workspace()
 db.scRNA.analysis_20200601 = shoji.Workspace()  # Create a sub-workspace
 </code></pre>
+<p>You can also use brackets to create a workspace with a name defined by an expression:</p>
+<pre><code class="python">name = &quot;Hello&quot; + &quot;World&quot;
+db[name] = shoji.Workspace()
+</code></pre>
+<p>You can list workspaces and check for the existence of a workspace in the usual ways:</p>
+<pre><code class="python">for ws in db:
+        ... # do something with the workspace object
+
+if &quot;samples&quot; in db:
+        ... # the workspace existed
+</code></pre>
+<p>You can list the contents of a workspace:</p>
+<pre><code class="python">ws._workspaces()  # Returns a list of names of sub-workspaces
+ws._tensors()     # Returns a list of names of tensors in the workspace
+ws._dimensions()  # Returns a list of names of dimensions in the workspace
+</code></pre>
 <p>You can delete a workspace using the <code>del</code> statement:</p>
 <pre><code class="python">del db.scRNA
 </code></pre>
@@ -151,6 +167,31 @@ db.scRNA = shoji.Workspace()
 db.scRNA.analysis_20200601 = shoji.Workspace()  # Create a sub-workspace
 ```
 
+You can also use brackets to create a workspace with a name defined by an expression:
+
+```python
+name = &#34;Hello&#34; + &#34;World&#34;
+db[name] = shoji.Workspace()
+```
+
+You can list workspaces and check for the existence of a workspace in the usual ways:
+
+```python
+for ws in db:
+        ... # do something with the workspace object
+
+if &#34;samples&#34; in db:
+        ... # the workspace existed
+```
+
+You can list the contents of a workspace:
+
+```python
+ws._workspaces()  # Returns a list of names of sub-workspaces
+ws._tensors()     # Returns a list of names of tensors in the workspace
+ws._dimensions()  # Returns a list of names of dimensions in the workspace
+```
+
 You can delete a workspace using the `del` statement:
 
 ```python
@@ -166,6 +207,8 @@ import numpy as np
 import logging
 import loompy
 import shoji
+import shoji.io
+from shoji.io import Compartment
 import h5py
 
 
@@ -210,35 +253,36 @@ class WorkspaceManager:
                 return ws
 
         def _dimensions(self) -&gt; List[str]:
-                return [self._subdir[&#34;dimensions&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
+                return [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
 
         def _get_dimension(self, name: str) -&gt; shoji.Dimension:
                 dim = self[name]
                 assert isinstance(dim, shoji.Dimension), f&#34;&#39;{name}&#39; is not a dimension&#34;
                 return dim
 
-        def _tensors(self) -&gt; List[str]:
-                return [self._subdir[&#34;tensors&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+        def _tensors(self, include_not_ready: bool = False) -&gt; List[str]:
+                names = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
+                if include_not_ready:
+                        return names
+                return [name for name in names if shoji.io.get_tensor(self._db.transaction, self, name) is not None]
 
-        def _get_tensor(self, name: str) -&gt; shoji.Tensor:
-                tensor = self[name]
+        def _get_tensor(self, name: str, include_initializing: bool = False) -&gt; shoji.Tensor:
+                tensor = shoji.io.get_tensor(self._db.transaction, self, name, include_initializing=include_initializing)
                 assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a tensor&#34;
                 return tensor
 
         def __dir__(self) -&gt; List[str]:
-                dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
-                tensors = [self._subdir[&#34;tensors&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+                dimensions = [self._subdir[Compartment.Dimensions].unpack(k)[0] for k,v in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
+                tensors = [self._subdir[Compartment.Tensors].unpack(k)[0] for k,v in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
                 return self._subdir.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
         def __iter__(self):
-                for s in self._subdir.list(self._db.transaction):
-                        yield self[s]
-                dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
-                for d in dimensions:
-                        yield self[d]
-                tensors = [self._subdir[&#34;tensors&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
-                for t in tensors:
-                        yield self[t]
+                for w in shoji.io.list_workspaces(self._db.transaction, self):
+                        yield w
+                for t in shoji.io.list_tensors(self._db.transaction, self):
+                        yield t
+                for d in shoji.io.list_dimensions(self._db.transaction, self):
+                        yield d
 
         def __contains__(self, name: str) -&gt; bool:
                 entity = shoji.io.get_entity(self._db.transaction, self, name)
@@ -275,7 +319,7 @@ class WorkspaceManager:
                         else:
                                 raise ValueError(&#34;First part of a multi-part name must be a workspace&#34;)
 
-        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, shoji.Tensor]:
+        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, &#34;shoji.NonTransactionalView&#34;, shoji.Tensor]:
                 # Try to read an attribute on the object
                 if isinstance(expr, str):
                         return self.__getattr__(expr)
@@ -306,25 +350,22 @@ class WorkspaceManager:
                         # Check that the first letter is lowercase
                         if not name[0].islower():
                                 raise AttributeError(&#34;Dimension name must begin with a lowercase letter&#34;)
-                        shoji.io.create_or_update_dimension(self._db.transaction, self, name, value)
+                        shoji.io.create_dimension(self._db.transaction, self, name, value)
                 elif isinstance(value, shoji.Tensor):
                         tensor = value
                         # Check that the first letter is uppercase
                         if not name[0].isupper():
                                 raise AttributeError(&#34;Tensor name must begin with an uppercase letter&#34;)
 
-                        # Note, this can fail as follows:
-                        #  * Before anything has been written
-                        #  * After the tensor has been full created but no values have been written
-                        #  * After one or more rows have been fully written (consistent with other tensors in the dimension)
-                        #  * After all rows have been fully written
-                        # In each case, the database state will be consistent
                         if name in self:
                                 if isinstance(self[name], shoji.Tensor):
                                         del self[name]
                                 else:
                                         raise AttributeError(f&#34;Cannot create new tensor &#39;{name}&#39; because it would overwrite existing entity&#34;)
                         shoji.io.create_tensor(self._db.transaction, self, name, tensor)
+                        shoji.io.initialize_tensor(self, name, tensor)
+                elif isinstance(value, shoji.WorkspaceManager):
+                        raise ValueError(&#34;Cannot assign WorkspaceManager object to workspace (did you mean to use Workspace object?&#34;)
                 else:
                         super().__setattr__(name, value)
         
@@ -352,9 +393,10 @@ class WorkspaceManager:
                 def fix_name(name, suffix, other_names):
                         if name in other_names:
                                 name += &#34;_&#34; + suffix
-                        name = name[0].upper() + name[1:]
+                        name = name.capitalize()
                         if not name[0].isupper():
                                 name = &#34;X_&#34; + name
+                        name = name.replace(&#34;.&#34;, &#34;_&#34;)
                         return name
 
                 if dimension_names is None:
@@ -364,8 +406,8 @@ class WorkspaceManager:
                 with loompy.connect(f, validate=False) as ds:
                         if layers is None:
                                 layers = list(ds.layers.keys())
-                        self[genes_dim] = shoji.Dimension(shape=None)
-                        self[cells_dim] = shoji.Dimension(shape=None)
+                        self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
+                        self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
                         if verbose:
                                 logging.info(&#34;Loading global attributes&#34;)
@@ -378,143 +420,41 @@ class WorkspaceManager:
                                         dtype = &#34;string&#34;
                                         val = val.astype(&#34;object&#34;)
                                 name = fix_name(key, &#34;global&#34;, ds.ca.keys() + ds.ra.keys() + ds.layers.keys())
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, val.shape, val)
+                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, val.shape, inits=val)
 
                         if verbose:
                                 logging.info(&#34;Loading row attributes&#34;)
-                        d = {}
                         for key, vals in ds.ra.items():
                                 dtype = vals.dtype.name
+                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
                                 name = fix_name(key, genes_dim, ds.ca.keys() + ds.layers.keys() + ds.attrs.keys())
-                                d[name] = ds.ra[key]
                                 dims = (genes_dim, ) + vals.shape[1:]
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
-                        self._get_dimension(genes_dim).append(d)
-                        self[genes_dim] = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
-                        
-                        for key, vals in ds.ca.items():
-                                dtype = ds.ca[key].dtype.name
-                                name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
-                                dims = (cells_dim, ) + vals.shape[1:]
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
+                                self[name] = shoji.Tensor(dtype, dims, inits=ds.ra[key])
 
                         if verbose:
-                                logging.info(&#34;Loading column attributes and matrix layers&#34;)
-                        STEP = 2000
-                        for i in range(0, ds.shape[1], STEP):
-                                d = {}
-                                for key in ds.ca.keys():
-                                        name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
-                                        d[name] = ds.ca[key][i:i + STEP]
-                                for key in layers:
-                                        name = &#34;Expression&#34; if key == &#34;&#34; else key
-                                        name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
-                                        dtype = ds.layers[key].dtype.name
-                                        if name == &#34;Expression&#34; and fix_expression_dtype:
-                                                dtype = &#34;uint16&#34;
-                                        if i == 0:
-                                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (cells_dim, genes_dim))
-                                        d[name] = ds.layers[key][:, i:i + STEP].T
-                                        if name == &#34;Expression&#34; and fix_expression_dtype:
-                                                d[name] = d[name].astype(&#34;uint16&#34;)
-                                self._get_dimension(cells_dim).append(d)
+                                logging.info(&#34;Loading column attributes&#34;)
+                        for key, vals in ds.ca.items():
+                                dtype = ds.ca[key].dtype.name
+                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
+                                name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+                                dims = (cells_dim,) + vals.shape[1:]
+                                self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
 
-        def _import(self, f: str, recursive: bool = False, group_name: str = &#34;/&#34;):
-                &#34;&#34;&#34;
-                Import a previously exported workspace
-
-                Args:
-                        f               The file name (full path)
-                        recursive       If true, sub-workspaces will also be imported
-                        group_name      The name of the HDF5 group from which to import
-                &#34;&#34;&#34;
-
-                # TODO: rewrite this to load from HDF5 not the workspace
-                h5 = h5py.File(f, &#34;r&#34;)
-                group = h5.require_group(group_name)
-                for dname in self._dimensions():
-                        dim = self._get_dimension(dname)
-                        group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
-
-                tensors: Dict[str, shoji.Tensor] = {}
-                for tname in self._tensors():
-                        tensor = self._get_tensor(tname)
-                        group.attrs[&#34;Tensor$&#34; + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
-                        group.create_dataset(
-                                tname,
-                                tensor.shape,
-                                tensor.dtype # TODO: get this right
-                        )
-                        if tensor.rank &gt; 0 and isinstance(tensor.dims[0], str):
-                                tensors[tensor.dims[0]] = tensor
-                        else:
-                                # Read the whole tensor
-                                data = tensor[:]                
-                ds: h5py.Dataset = group[tname]
-                n_rows_per_read = 1000
-                ix = 0
-                while True:
-                        try:
-                                data = tensor[ix: ix + n_rows_per_read]
-                                ds[ix: ix + n_rows_per_read] = data
-                        except fdb.impl.FDBError as e:
-                                if e.code == 1007:
-                                        n_rows_per_read = max(1, n_rows_per_read // 2)
-                                        continue
-                                raise e
-
-                if recursive:
-                        for wsname in self._workspaces():
-                                self._get_workspace(wsname)._export(f, True, os.path.join(group_name, wsname))          
-                h5.close()
-
-        def _export(self, f: str, recursive: bool = False, group_name: str = &#34;/&#34;):
-                &#34;&#34;&#34;
-                Export the workspace to an HDF5 file
-
-                Args:
-                        f                       The file name (full path)
-                        recursive       If true, sub-workspaces will be exported to HDF5 sub-groups
-                        group_name      The name of the HDF5 group where the workspace should be stored
-
-                Remarks:
-                        If the file does not exist, it will be created
-                &#34;&#34;&#34;
-                h5 = h5py.File(f, &#34;a&#34;)
-                group = h5.require_group(group_name)
-
-                for dname in self._dimensions():
-                        dim = self._get_dimension(dname)
-                        group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
-
-                for tname in self._tensors():
-                        tensor = self._get_tensor(tname)
-                        group.attrs[&#34;Tensor$&#34; + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
-                        group.create_dataset(tname, tensor.shape, tensor.dtype)
-                        ds: h5py.Dataset = group[tname]
-                        # Now read/write the dataset
-                        n_rows_per_read = 1000
-                        ix = 0
-                        while True:
-                                try:
-                                        data = tensor[ix: ix + n_rows_per_read]
-                                        ds[ix: ix + n_rows_per_read] = data
-                                except fdb.impl.FDBError as e:
-                                        if e.code == 1007:
-                                                n_rows_per_read = max(1, n_rows_per_read // 2)
-                                                continue
-                                        raise e
-
-                if recursive:
-                        for wsname in self._workspaces():
-                                self._get_workspace(wsname)._export(f, True, os.path.join(group_name, wsname))
-                
-                h5.close()
+                        if verbose:
+                                logging.info(&#34;Loading layers&#34;)
+                        for key in layers:
+                                name = &#34;Expression&#34; if key == &#34;&#34; else key
+                                name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
+                                dtype = ds.layers[key].dtype.name
+                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
+                                if name == &#34;Expression&#34; and fix_expression_dtype:
+                                        dtype = &#34;uint16&#34;
+                                self[name] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=ds.layers[key][:, :].T.astype(dtype))
                         
         def __repr__(self) -&gt; str:
                 subdirs = self._workspaces()
-                dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
-                tensors = [self._subdir[&#34;tensors&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+                dimensions = [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
+                tensors = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
                 s = f&#34;Workspace with {len(subdirs)} workspaces, {len(dimensions)} dimensions and {len(tensors)} tensors:&#34;
                 for sub in subdirs:
                         s += f&#34;\n  {sub} &lt;Workspace&gt;&#34; 
@@ -571,9 +511,11 @@ class WorkspaceManager:
                                         s += &#34;&lt;td&gt;&#34; + &#34; ✕ &#34;.join([(str(s) if s is not None else &#34;__&#34;) for s in t.dims]) + &#34;&lt;/td&gt;&#34;
                                         shps = []
                                         for i, shp in enumerate(t.shape):
-                                                if t.dims[i] is None:
-                                                        shps.append(&#34;__&#34;)
-                                                elif isinstance(t.dims[i], str) and self[t.dims[i]].shape is None:
+                                                # if t.dims[i] is None:
+                                                #       shps.append(&#34;__&#34;)
+                                                # elif isinstance(t.dims[i], str) and self[t.dims[i]].shape is None:
+                                                #       shps.append(&#34;__&#34;)
+                                                if i == 0 and t.jagged:
                                                         shps.append(&#34;__&#34;)
                                                 else:
                                                         shps.append(&#34;{:,}&#34;.format(shp))
@@ -656,35 +598,36 @@ class WorkspaceManager:
                 return ws
 
         def _dimensions(self) -&gt; List[str]:
-                return [self._subdir[&#34;dimensions&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
+                return [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
 
         def _get_dimension(self, name: str) -&gt; shoji.Dimension:
                 dim = self[name]
                 assert isinstance(dim, shoji.Dimension), f&#34;&#39;{name}&#39; is not a dimension&#34;
                 return dim
 
-        def _tensors(self) -&gt; List[str]:
-                return [self._subdir[&#34;tensors&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+        def _tensors(self, include_not_ready: bool = False) -&gt; List[str]:
+                names = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
+                if include_not_ready:
+                        return names
+                return [name for name in names if shoji.io.get_tensor(self._db.transaction, self, name) is not None]
 
-        def _get_tensor(self, name: str) -&gt; shoji.Tensor:
-                tensor = self[name]
+        def _get_tensor(self, name: str, include_initializing: bool = False) -&gt; shoji.Tensor:
+                tensor = shoji.io.get_tensor(self._db.transaction, self, name, include_initializing=include_initializing)
                 assert isinstance(tensor, shoji.Tensor), f&#34;&#39;{name}&#39; is not a tensor&#34;
                 return tensor
 
         def __dir__(self) -&gt; List[str]:
-                dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
-                tensors = [self._subdir[&#34;tensors&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+                dimensions = [self._subdir[Compartment.Dimensions].unpack(k)[0] for k,v in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
+                tensors = [self._subdir[Compartment.Tensors].unpack(k)[0] for k,v in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
                 return self._subdir.list(self._db.transaction) + dimensions + tensors + object.__dir__(self)
 
         def __iter__(self):
-                for s in self._subdir.list(self._db.transaction):
-                        yield self[s]
-                dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
-                for d in dimensions:
-                        yield self[d]
-                tensors = [self._subdir[&#34;tensors&#34;].unpack(k)[0] for k,v in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
-                for t in tensors:
-                        yield self[t]
+                for w in shoji.io.list_workspaces(self._db.transaction, self):
+                        yield w
+                for t in shoji.io.list_tensors(self._db.transaction, self):
+                        yield t
+                for d in shoji.io.list_dimensions(self._db.transaction, self):
+                        yield d
 
         def __contains__(self, name: str) -&gt; bool:
                 entity = shoji.io.get_entity(self._db.transaction, self, name)
@@ -721,7 +664,7 @@ class WorkspaceManager:
                         else:
                                 raise ValueError(&#34;First part of a multi-part name must be a workspace&#34;)
 
-        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, shoji.Tensor]:
+        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, &#34;shoji.NonTransactionalView&#34;, shoji.Tensor]:
                 # Try to read an attribute on the object
                 if isinstance(expr, str):
                         return self.__getattr__(expr)
@@ -752,25 +695,22 @@ class WorkspaceManager:
                         # Check that the first letter is lowercase
                         if not name[0].islower():
                                 raise AttributeError(&#34;Dimension name must begin with a lowercase letter&#34;)
-                        shoji.io.create_or_update_dimension(self._db.transaction, self, name, value)
+                        shoji.io.create_dimension(self._db.transaction, self, name, value)
                 elif isinstance(value, shoji.Tensor):
                         tensor = value
                         # Check that the first letter is uppercase
                         if not name[0].isupper():
                                 raise AttributeError(&#34;Tensor name must begin with an uppercase letter&#34;)
 
-                        # Note, this can fail as follows:
-                        #  * Before anything has been written
-                        #  * After the tensor has been full created but no values have been written
-                        #  * After one or more rows have been fully written (consistent with other tensors in the dimension)
-                        #  * After all rows have been fully written
-                        # In each case, the database state will be consistent
                         if name in self:
                                 if isinstance(self[name], shoji.Tensor):
                                         del self[name]
                                 else:
                                         raise AttributeError(f&#34;Cannot create new tensor &#39;{name}&#39; because it would overwrite existing entity&#34;)
                         shoji.io.create_tensor(self._db.transaction, self, name, tensor)
+                        shoji.io.initialize_tensor(self, name, tensor)
+                elif isinstance(value, shoji.WorkspaceManager):
+                        raise ValueError(&#34;Cannot assign WorkspaceManager object to workspace (did you mean to use Workspace object?&#34;)
                 else:
                         super().__setattr__(name, value)
         
@@ -798,9 +738,10 @@ class WorkspaceManager:
                 def fix_name(name, suffix, other_names):
                         if name in other_names:
                                 name += &#34;_&#34; + suffix
-                        name = name[0].upper() + name[1:]
+                        name = name.capitalize()
                         if not name[0].isupper():
                                 name = &#34;X_&#34; + name
+                        name = name.replace(&#34;.&#34;, &#34;_&#34;)
                         return name
 
                 if dimension_names is None:
@@ -810,8 +751,8 @@ class WorkspaceManager:
                 with loompy.connect(f, validate=False) as ds:
                         if layers is None:
                                 layers = list(ds.layers.keys())
-                        self[genes_dim] = shoji.Dimension(shape=None)
-                        self[cells_dim] = shoji.Dimension(shape=None)
+                        self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
+                        self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
                         if verbose:
                                 logging.info(&#34;Loading global attributes&#34;)
@@ -824,143 +765,41 @@ class WorkspaceManager:
                                         dtype = &#34;string&#34;
                                         val = val.astype(&#34;object&#34;)
                                 name = fix_name(key, &#34;global&#34;, ds.ca.keys() + ds.ra.keys() + ds.layers.keys())
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, val.shape, val)
+                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, val.shape, inits=val)
 
                         if verbose:
                                 logging.info(&#34;Loading row attributes&#34;)
-                        d = {}
                         for key, vals in ds.ra.items():
                                 dtype = vals.dtype.name
+                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
                                 name = fix_name(key, genes_dim, ds.ca.keys() + ds.layers.keys() + ds.attrs.keys())
-                                d[name] = ds.ra[key]
                                 dims = (genes_dim, ) + vals.shape[1:]
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
-                        self._get_dimension(genes_dim).append(d)
-                        self[genes_dim] = shoji.Dimension(shape=ds.shape[0])  # Set to a fixed shape to avoid jagged arrays below
-                        
-                        for key, vals in ds.ca.items():
-                                dtype = ds.ca[key].dtype.name
-                                name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
-                                dims = (cells_dim, ) + vals.shape[1:]
-                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, dims=dims)
+                                self[name] = shoji.Tensor(dtype, dims, inits=ds.ra[key])
 
                         if verbose:
-                                logging.info(&#34;Loading column attributes and matrix layers&#34;)
-                        STEP = 2000
-                        for i in range(0, ds.shape[1], STEP):
-                                d = {}
-                                for key in ds.ca.keys():
-                                        name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
-                                        d[name] = ds.ca[key][i:i + STEP]
-                                for key in layers:
-                                        name = &#34;Expression&#34; if key == &#34;&#34; else key
-                                        name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
-                                        dtype = ds.layers[key].dtype.name
-                                        if name == &#34;Expression&#34; and fix_expression_dtype:
-                                                dtype = &#34;uint16&#34;
-                                        if i == 0:
-                                                self[name] = shoji.Tensor(&#34;string&#34; if dtype == &#34;object&#34; else dtype, (cells_dim, genes_dim))
-                                        d[name] = ds.layers[key][:, i:i + STEP].T
-                                        if name == &#34;Expression&#34; and fix_expression_dtype:
-                                                d[name] = d[name].astype(&#34;uint16&#34;)
-                                self._get_dimension(cells_dim).append(d)
+                                logging.info(&#34;Loading column attributes&#34;)
+                        for key, vals in ds.ca.items():
+                                dtype = ds.ca[key].dtype.name
+                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
+                                name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+                                dims = (cells_dim,) + vals.shape[1:]
+                                self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
 
-        def _import(self, f: str, recursive: bool = False, group_name: str = &#34;/&#34;):
-                &#34;&#34;&#34;
-                Import a previously exported workspace
-
-                Args:
-                        f               The file name (full path)
-                        recursive       If true, sub-workspaces will also be imported
-                        group_name      The name of the HDF5 group from which to import
-                &#34;&#34;&#34;
-
-                # TODO: rewrite this to load from HDF5 not the workspace
-                h5 = h5py.File(f, &#34;r&#34;)
-                group = h5.require_group(group_name)
-                for dname in self._dimensions():
-                        dim = self._get_dimension(dname)
-                        group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
-
-                tensors: Dict[str, shoji.Tensor] = {}
-                for tname in self._tensors():
-                        tensor = self._get_tensor(tname)
-                        group.attrs[&#34;Tensor$&#34; + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
-                        group.create_dataset(
-                                tname,
-                                tensor.shape,
-                                tensor.dtype # TODO: get this right
-                        )
-                        if tensor.rank &gt; 0 and isinstance(tensor.dims[0], str):
-                                tensors[tensor.dims[0]] = tensor
-                        else:
-                                # Read the whole tensor
-                                data = tensor[:]                
-                ds: h5py.Dataset = group[tname]
-                n_rows_per_read = 1000
-                ix = 0
-                while True:
-                        try:
-                                data = tensor[ix: ix + n_rows_per_read]
-                                ds[ix: ix + n_rows_per_read] = data
-                        except fdb.impl.FDBError as e:
-                                if e.code == 1007:
-                                        n_rows_per_read = max(1, n_rows_per_read // 2)
-                                        continue
-                                raise e
-
-                if recursive:
-                        for wsname in self._workspaces():
-                                self._get_workspace(wsname)._export(f, True, os.path.join(group_name, wsname))          
-                h5.close()
-
-        def _export(self, f: str, recursive: bool = False, group_name: str = &#34;/&#34;):
-                &#34;&#34;&#34;
-                Export the workspace to an HDF5 file
-
-                Args:
-                        f                       The file name (full path)
-                        recursive       If true, sub-workspaces will be exported to HDF5 sub-groups
-                        group_name      The name of the HDF5 group where the workspace should be stored
-
-                Remarks:
-                        If the file does not exist, it will be created
-                &#34;&#34;&#34;
-                h5 = h5py.File(f, &#34;a&#34;)
-                group = h5.require_group(group_name)
-
-                for dname in self._dimensions():
-                        dim = self._get_dimension(dname)
-                        group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
-
-                for tname in self._tensors():
-                        tensor = self._get_tensor(tname)
-                        group.attrs[&#34;Tensor$&#34; + tname] = np.array((tensor.dtype, tensor.rank, 1 if tensor.jagged else 0) + tensor.dims + tensor.shape, dtype=object)
-                        group.create_dataset(tname, tensor.shape, tensor.dtype)
-                        ds: h5py.Dataset = group[tname]
-                        # Now read/write the dataset
-                        n_rows_per_read = 1000
-                        ix = 0
-                        while True:
-                                try:
-                                        data = tensor[ix: ix + n_rows_per_read]
-                                        ds[ix: ix + n_rows_per_read] = data
-                                except fdb.impl.FDBError as e:
-                                        if e.code == 1007:
-                                                n_rows_per_read = max(1, n_rows_per_read // 2)
-                                                continue
-                                        raise e
-
-                if recursive:
-                        for wsname in self._workspaces():
-                                self._get_workspace(wsname)._export(f, True, os.path.join(group_name, wsname))
-                
-                h5.close()
+                        if verbose:
+                                logging.info(&#34;Loading layers&#34;)
+                        for key in layers:
+                                name = &#34;Expression&#34; if key == &#34;&#34; else key
+                                name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
+                                dtype = ds.layers[key].dtype.name
+                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
+                                if name == &#34;Expression&#34; and fix_expression_dtype:
+                                        dtype = &#34;uint16&#34;
+                                self[name] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=ds.layers[key][:, :].T.astype(dtype))
                         
         def __repr__(self) -&gt; str:
                 subdirs = self._workspaces()
-                dimensions = [self._subdir[&#34;dimensions&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;dimensions&#34;].range()]]
-                tensors = [self._subdir[&#34;tensors&#34;].unpack(k.key)[0] for k in self._db.transaction[self._subdir[&#34;tensors&#34;].range()]]
+                dimensions = [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
+                tensors = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
                 s = f&#34;Workspace with {len(subdirs)} workspaces, {len(dimensions)} dimensions and {len(tensors)} tensors:&#34;
                 for sub in subdirs:
                         s += f&#34;\n  {sub} &lt;Workspace&gt;&#34; 
@@ -1017,9 +856,11 @@ class WorkspaceManager:
                                         s += &#34;&lt;td&gt;&#34; + &#34; ✕ &#34;.join([(str(s) if s is not None else &#34;__&#34;) for s in t.dims]) + &#34;&lt;/td&gt;&#34;
                                         shps = []
                                         for i, shp in enumerate(t.shape):
-                                                if t.dims[i] is None:
-                                                        shps.append(&#34;__&#34;)
-                                                elif isinstance(t.dims[i], str) and self[t.dims[i]].shape is None:
+                                                # if t.dims[i] is None:
+                                                #       shps.append(&#34;__&#34;)
+                                                # elif isinstance(t.dims[i], str) and self[t.dims[i]].shape is None:
+                                                #       shps.append(&#34;__&#34;)
+                                                if i == 0 and t.jagged:
                                                         shps.append(&#34;__&#34;)
                                                 else:
                                                         shps.append(&#34;{:,}&#34;.format(shp))

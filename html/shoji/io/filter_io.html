@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1" />
+<meta name="generator" content="pdoc 0.8.4" />
+<title>shoji.io.filter_io API documentation</title>
+<meta name="description" content="" />
+<link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/sanitize.min.css" integrity="sha256-PK9q560IAAa6WVRRh76LtCaI8pjTJ2z11v0miyNNjrs=" crossorigin>
+<link rel="preload stylesheet" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/10up-sanitize.css/11.0.1/typography.min.css" integrity="sha256-7l/o7C8jubJiy74VsKTidCy1yBkRtiUGbVkYBylBqUg=" crossorigin>
+<link rel="stylesheet preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/styles/github.min.css" crossorigin>
+<style>:root{--highlight-color:#fe9}.flex{display:flex !important}body{line-height:1.5em}#content{padding:20px}#sidebar{padding:30px;overflow:hidden}#sidebar > *:last-child{margin-bottom:2cm}.http-server-breadcrumbs{font-size:130%;margin:0 0 15px 0}#footer{font-size:.75em;padding:5px 30px;border-top:1px solid #ddd;text-align:right}#footer p{margin:0 0 0 1em;display:inline-block}#footer p:last-child{margin-right:30px}h1,h2,h3,h4,h5{font-weight:300}h1{font-size:2.5em;line-height:1.1em}h2{font-size:1.75em;margin:1em 0 .50em 0}h3{font-size:1.4em;margin:25px 0 10px 0}h4{margin:0;font-size:105%}h1:target,h2:target,h3:target,h4:target,h5:target,h6:target{background:var(--highlight-color);padding:.2em 0}a{color:#058;text-decoration:none;transition:color .3s ease-in-out}a:hover{color:#e82}.title code{font-weight:bold}h2[id^="header-"]{margin-top:2em}.ident{color:#900}pre code{background:#f8f8f8;font-size:.8em;line-height:1.4em}code{background:#f2f2f1;padding:1px 4px;overflow-wrap:break-word}h1 code{background:transparent}pre{background:#f8f8f8;border:0;border-top:1px solid #ccc;border-bottom:1px solid #ccc;margin:1em 0;padding:1ex}#http-server-module-list{display:flex;flex-flow:column}#http-server-module-list div{display:flex}#http-server-module-list dt{min-width:10%}#http-server-module-list p{margin-top:0}.toc ul,#index{list-style-type:none;margin:0;padding:0}#index code{background:transparent}#index h3{border-bottom:1px solid #ddd}#index ul{padding:0}#index h4{margin-top:.6em;font-weight:bold}@media (min-width:200ex){#index .two-column{column-count:2}}@media (min-width:300ex){#index .two-column{column-count:3}}dl{margin-bottom:2em}dl dl:last-child{margin-bottom:4em}dd{margin:0 0 1em 3em}#header-classes + dl > dd{margin-bottom:3em}dd dd{margin-left:2em}dd p{margin:10px 0}.name{background:#eee;font-weight:bold;font-size:.85em;padding:5px 10px;display:inline-block;min-width:40%}.name:hover{background:#e0e0e0}dt:target .name{background:var(--highlight-color)}.name > span:first-child{white-space:nowrap}.name.class > span:nth-child(2){margin-left:.4em}.inherited{color:#999;border-left:5px solid #eee;padding-left:1em}.inheritance em{font-style:normal;font-weight:bold}.desc h2{font-weight:400;font-size:1.25em}.desc h3{font-size:1em}.desc dt code{background:inherit}.source summary,.git-link-div{color:#666;text-align:right;font-weight:400;font-size:.8em;text-transform:uppercase}.source summary > *{white-space:nowrap;cursor:pointer}.git-link{color:inherit;margin-left:1em}.source pre{max-height:500px;overflow:auto;margin:0}.source pre code{font-size:12px;overflow:visible}.hlist{list-style:none}.hlist li{display:inline}.hlist li:after{content:',\2002'}.hlist li:last-child:after{content:none}.hlist .hlist{display:inline;padding-left:1em}img{max-width:100%}td{padding:0 .5em}.admonition{padding:.1em .5em;margin-bottom:1em}.admonition-title{font-weight:bold}.admonition.note,.admonition.info,.admonition.important{background:#aef}.admonition.todo,.admonition.versionadded,.admonition.tip,.admonition.hint{background:#dfd}.admonition.warning,.admonition.versionchanged,.admonition.deprecated{background:#fd4}.admonition.error,.admonition.danger,.admonition.caution{background:lightpink}</style>
+<style media="screen and (min-width: 700px)">@media screen and (min-width:700px){#sidebar{width:30%;height:100vh;overflow:auto;position:sticky;top:0}#content{width:70%;max-width:100ch;padding:3em 4em;border-left:1px solid #ddd}pre code{font-size:1em}.item .name{font-size:1em}main{display:flex;flex-direction:row-reverse;justify-content:flex-end}.toc ul ul,#index ul{padding-left:1.5em}.toc > ul > li{margin-top:.5em}}</style>
+<style media="print">@media print{#sidebar h1{page-break-before:always}.source{display:none}}@media print{*{background:transparent !important;color:#000 !important;box-shadow:none !important;text-shadow:none !important}a[href]:after{content:" (" attr(href) ")";font-size:90%}a[href][title]:after{content:none}abbr[title]:after{content:" (" attr(title) ")"}.ir a:after,a[href^="javascript:"]:after,a[href^="#"]:after{content:""}pre,blockquote{border:1px solid #999;page-break-inside:avoid}thead{display:table-header-group}tr,img{page-break-inside:avoid}img{max-width:100% !important}@page{margin:0.5cm}p,h2,h3{orphans:3;widows:3}h1,h2,h3,h4,h5,h6{page-break-after:avoid}}</style>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/highlight.min.js" integrity="sha256-eOgo0OtLL4cdq7RdwRUiGKLX9XsIJ7nGhWEKbohmVAQ=" crossorigin></script>
+<script>window.addEventListener('DOMContentLoaded', () => hljs.initHighlighting())</script>
+</head>
+<body>
+<main>
+<article id="content">
+<header>
+<h1 class="title">Module <code>shoji.io.filter_io</code></h1>
+</header>
+<section id="section-intro">
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">from typing import Tuple, Dict, List, Union
+import shoji
+import shoji.io
+import fdb
+import numpy as np
+from .enums import Compartment
+
+
+@fdb.transactional
+def const_compare(tr, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, operator: str, const: Tuple[int, str, float]) -&gt; np.ndarray:
+        &#34;&#34;&#34;
+        Compare a tensor to a constant value, and return all indices that match
+        &#34;&#34;&#34;
+        # Code for range, equality and inequality filters
+        tensor = shoji.io.get_tensor(tr, wsm, name)
+        const = tensor.python_dtype()(const)  # Cast the const to string, float or int
+        index = wsm._subdir[Compartment.TensorIndex][name]
+        eq_range = index[const].range()
+        all_range = index.range()
+        start, stop = all_range.start, all_range.stop
+        if operator == &#34;!=&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+                a = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+                stop = all_range.stop
+                b = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                return np.concatenate([a, b])
+        if operator == &#34;==&#34;:
+                start, stop = eq_range.start, eq_range.stop
+        elif operator == &#34;&gt;=&#34;:
+                start = eq_range.start
+        elif operator == &#34;&gt;&#34;:
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+        elif operator == &#34;&lt;=&#34;:
+                stop = eq_range.stop
+        elif operator == &#34;&lt;&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+        return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+
+
+def get_filtered_indices(wsm: &#34;shoji.WorkspaceManager&#34;, tensor: &#34;shoji.Tensor&#34;, filters: List[&#34;shoji.Filter&#34;], axis: int, n_rows: int) -&gt; np.ndarray:
+        indices = None
+        for f in filters:
+                if isinstance(tensor.dims[axis], str) and tensor.dims[axis] == f.dim:
+                        indices = np.sort(f.get_rows(wsm))
+                elif isinstance(f, (shoji.TensorBoolFilter, shoji.TensorIndicesFilter, shoji.TensorSliceFilter)) and f.tensor.name == tensor.name and f.axis == axis:
+                        indices = np.sort(f.get_rows(wsm, n_rows))
+        if indices is None:
+                indices = np.arange(n_rows)
+        return indices
+
+
+def read_filtered(wsm: &#34;shoji.WorkspaceManager&#34;, name: str, filters: List[&#34;shoji.Filter&#34;]) -&gt; Union[np.ndarray, List[np.ndarray]]:
+        tensor = wsm._get_tensor(name)
+        subspace = wsm._subdir
+        if tensor.jagged:
+                rows = get_filtered_indices(wsm, tensor, filters, 0, tensor.shape[0])
+                result = []
+                for row in rows:
+                        row_shape = fdb.tuple.unpack(wsm._db.transaction[subspace.pack((Compartment.TensorRowShapes, name, int(row)))])
+                        indices = [np.array([row])]
+                        for axis in range(1, tensor.rank):
+                                indices.append(get_filtered_indices(wsm, tensor, filters, axis, row_shape[axis - 1]))
+                        result.append(shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, False))
+                return result
+        else:
+                indices = [get_filtered_indices(wsm, tensor, filters, i, tensor.shape[i]) for i in range(tensor.rank)]
+                return shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, False)
+
+
+@fdb.transactional
+def write_filtered(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, vals: Union[np.ndarray, List[np.ndarray]], filters: List[&#34;shoji.Filter&#34;]) -&gt; None:
+        tensor: shoji.Tensor = wsm._get_tensor(name)
+        subspace = wsm._subdir
+        assert isinstance(vals, (np.ndarray, list, tuple)), f&#34;Value assigned to &#39;{name}&#39; is not a numpy array or a list or tuple of numpy arrays&#34;
+
+        if tensor.jagged:
+                rows = get_filtered_indices(wsm, tensor, filters, 0, tensor.shape[0])
+                for row in rows:
+                        row_shape = fdb.tuple.unpack(wsm._db.transaction[subspace.pack((Compartment.TensorRowShapes, name, int(row)))])
+                        indices = [np.array([row])]
+                        for axis in range(1, tensor.rank):
+                                indices.append(get_filtered_indices(wsm, tensor, filters, axis, row_shape[axis - 1]))
+                        shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals[row])
+        else:
+                indices = [get_filtered_indices(wsm, tensor, filters, i, tensor.shape[i]) for i in range(tensor.rank)]
+                shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals)</code></pre>
+</details>
+</section>
+<section>
+</section>
+<section>
+</section>
+<section>
+<h2 class="section-title" id="header-functions">Functions</h2>
+<dl>
+<dt id="shoji.io.filter_io.const_compare"><code class="name flex">
+<span>def <span class="ident">const_compare</span></span>(<span>tr, wsm: shoji.WorkspaceManager, name: str, operator: str, const: Tuple[int, str, float]) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Compare a tensor to a constant value, and return all indices that match</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@fdb.transactional
+def const_compare(tr, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, operator: str, const: Tuple[int, str, float]) -&gt; np.ndarray:
+        &#34;&#34;&#34;
+        Compare a tensor to a constant value, and return all indices that match
+        &#34;&#34;&#34;
+        # Code for range, equality and inequality filters
+        tensor = shoji.io.get_tensor(tr, wsm, name)
+        const = tensor.python_dtype()(const)  # Cast the const to string, float or int
+        index = wsm._subdir[Compartment.TensorIndex][name]
+        eq_range = index[const].range()
+        all_range = index.range()
+        start, stop = all_range.start, all_range.stop
+        if operator == &#34;!=&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+                a = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+                stop = all_range.stop
+                b = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                return np.concatenate([a, b])
+        if operator == &#34;==&#34;:
+                start, stop = eq_range.start, eq_range.stop
+        elif operator == &#34;&gt;=&#34;:
+                start = eq_range.start
+        elif operator == &#34;&gt;&#34;:
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+        elif operator == &#34;&lt;=&#34;:
+                stop = eq_range.stop
+        elif operator == &#34;&lt;&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+        return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)</code></pre>
+</details>
+</dd>
+<dt id="shoji.io.filter_io.get_filtered_indices"><code class="name flex">
+<span>def <span class="ident">get_filtered_indices</span></span>(<span>wsm: shoji.WorkspaceManager, tensor: shoji.Tensor, filters: List[ForwardRef('shoji.Filter')], axis: int, n_rows: int) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def get_filtered_indices(wsm: &#34;shoji.WorkspaceManager&#34;, tensor: &#34;shoji.Tensor&#34;, filters: List[&#34;shoji.Filter&#34;], axis: int, n_rows: int) -&gt; np.ndarray:
+        indices = None
+        for f in filters:
+                if isinstance(tensor.dims[axis], str) and tensor.dims[axis] == f.dim:
+                        indices = np.sort(f.get_rows(wsm))
+                elif isinstance(f, (shoji.TensorBoolFilter, shoji.TensorIndicesFilter, shoji.TensorSliceFilter)) and f.tensor.name == tensor.name and f.axis == axis:
+                        indices = np.sort(f.get_rows(wsm, n_rows))
+        if indices is None:
+                indices = np.arange(n_rows)
+        return indices</code></pre>
+</details>
+</dd>
+<dt id="shoji.io.filter_io.read_filtered"><code class="name flex">
+<span>def <span class="ident">read_filtered</span></span>(<span>wsm: shoji.WorkspaceManager, name: str, filters: List[ForwardRef('shoji.Filter')]) ‑> Union[numpy.ndarray, List[numpy.ndarray]]</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def read_filtered(wsm: &#34;shoji.WorkspaceManager&#34;, name: str, filters: List[&#34;shoji.Filter&#34;]) -&gt; Union[np.ndarray, List[np.ndarray]]:
+        tensor = wsm._get_tensor(name)
+        subspace = wsm._subdir
+        if tensor.jagged:
+                rows = get_filtered_indices(wsm, tensor, filters, 0, tensor.shape[0])
+                result = []
+                for row in rows:
+                        row_shape = fdb.tuple.unpack(wsm._db.transaction[subspace.pack((Compartment.TensorRowShapes, name, int(row)))])
+                        indices = [np.array([row])]
+                        for axis in range(1, tensor.rank):
+                                indices.append(get_filtered_indices(wsm, tensor, filters, axis, row_shape[axis - 1]))
+                        result.append(shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, False))
+                return result
+        else:
+                indices = [get_filtered_indices(wsm, tensor, filters, i, tensor.shape[i]) for i in range(tensor.rank)]
+                return shoji.io.read_at_indices(wsm, name, indices, tensor.chunks, False)</code></pre>
+</details>
+</dd>
+<dt id="shoji.io.filter_io.write_filtered"><code class="name flex">
+<span>def <span class="ident">write_filtered</span></span>(<span>tr: fdb.impl.Transaction, wsm: shoji.WorkspaceManager, name: str, vals: Union[numpy.ndarray, List[numpy.ndarray]], filters: List[ForwardRef('shoji.Filter')]) ‑> NoneType</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@fdb.transactional
+def write_filtered(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, vals: Union[np.ndarray, List[np.ndarray]], filters: List[&#34;shoji.Filter&#34;]) -&gt; None:
+        tensor: shoji.Tensor = wsm._get_tensor(name)
+        subspace = wsm._subdir
+        assert isinstance(vals, (np.ndarray, list, tuple)), f&#34;Value assigned to &#39;{name}&#39; is not a numpy array or a list or tuple of numpy arrays&#34;
+
+        if tensor.jagged:
+                rows = get_filtered_indices(wsm, tensor, filters, 0, tensor.shape[0])
+                for row in rows:
+                        row_shape = fdb.tuple.unpack(wsm._db.transaction[subspace.pack((Compartment.TensorRowShapes, name, int(row)))])
+                        indices = [np.array([row])]
+                        for axis in range(1, tensor.rank):
+                                indices.append(get_filtered_indices(wsm, tensor, filters, axis, row_shape[axis - 1]))
+                        shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals[row])
+        else:
+                indices = [get_filtered_indices(wsm, tensor, filters, i, tensor.shape[i]) for i in range(tensor.rank)]
+                shoji.io.write_at_indices(tr, wsm, (Compartment.TensorValues, name), indices, tensor.chunks, vals)</code></pre>
+</details>
+</dd>
+</dl>
+</section>
+<section>
+</section>
+</article>
+<nav id="sidebar">
+<h1>Index</h1>
+<div class="toc">
+<ul></ul>
+</div>
+<ul id="index">
+<li><h3>Super-module</h3>
+<ul>
+<li><code><a title="shoji.io" href="index.html">shoji.io</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-functions">Functions</a></h3>
+<ul class="">
+<li><code><a title="shoji.io.filter_io.const_compare" href="#shoji.io.filter_io.const_compare">const_compare</a></code></li>
+<li><code><a title="shoji.io.filter_io.get_filtered_indices" href="#shoji.io.filter_io.get_filtered_indices">get_filtered_indices</a></code></li>
+<li><code><a title="shoji.io.filter_io.read_filtered" href="#shoji.io.filter_io.read_filtered">read_filtered</a></code></li>
+<li><code><a title="shoji.io.filter_io.write_filtered" href="#shoji.io.filter_io.write_filtered">write_filtered</a></code></li>
+</ul>
+</li>
+</ul>
+</nav>
+</main>
+<footer id="footer">
+<p>Generated by <a href="https://pdoc3.github.io/pdoc"><cite>pdoc</cite> 0.8.4</a>.</p>
+</footer>
+</body>
+</html>

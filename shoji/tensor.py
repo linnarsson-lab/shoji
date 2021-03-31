@@ -11,8 +11,6 @@ dimension is declared fixed-length) by appending values.
 
 ## Overview
 
-..image:: assets/bitmap/tensor_rank@2x.png
-
 Tensors are created like this:
 
 ```python
@@ -21,7 +19,7 @@ tissues = ...        # Assume we have an np.ndarray of tissue names
 db = shoji.connect() # Connect to the database
 ws = db.scRNA        # scRNA is a Workspace in the database, previously created
 
-ws.Tissue = shoji.Tensor("string", ("cells",), tissues)
+ws.Tissue = shoji.Tensor("string", ("cells",), inits=tissues)
 ```
 
 The tensor is declared with a datatype `"string"`, a tuple of dimensions `("cells",)` and an optional `np.ndarray` of initial values.
@@ -31,8 +29,8 @@ The tensor is declared with a datatype `"string"`, a tuple of dimensions `("cell
 The *rank* of a tensor is the number of dimensions of the tensor. A scalar 
 value has rank 0, a vector has rank 1, and a matrix has rank 2. Higher ranks
 are possible; for example, a vector of 2D images would have rank 3, and a
-timelapse recording in three color channels would have rank 6 (time, width, height,
-three colors).
+timelapse recording in several color channels would have rank 4 (timepoint, x, y,
+color).
 
 ### Datatype
 
@@ -183,6 +181,7 @@ from typing import Tuple, Union, List, Optional, Callable, Literal
 import numpy as np
 import shoji
 import sys
+import logging
 
 
 FancyIndexElement = Union["shoji.Filter", slice, int, np.ndarray]
@@ -344,10 +343,11 @@ class Tensor:
 			if self.rank == 0:
 				self.chunks = ()
 			elif self.rank == 1:
-				self.chunks = (1000 // byte_size,)
+				self.chunks = (500 // byte_size,)
 			else:
-				max_size = (dim if isinstance(dim, int) else sys.maxsize for dim in self.dims)
-				self.chunks = tuple(min(a,b) for a,b in zip(max_size, (600 // byte_size, 100)))
+				desired_sizes = (300 // byte_size, 100) + (1,) * (self.rank - 2)
+				max_sizes = (dim if isinstance(dim, int) else sys.maxsize for dim in self.dims)
+				self.chunks = tuple(min(a,b) for a,b in zip(max_sizes, desired_sizes))
 		else:
 			if len(chunks) != self.rank:
 				raise ValueError(f"chunks={chunks} is wrong number of dimensions for rank-{self.rank} tensor" + (" (use () for rank-0 tensor)" if self.rank == 0 else ""))

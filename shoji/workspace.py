@@ -69,6 +69,31 @@ db.scRNA = shoji.Workspace()
 db.scRNA.analysis_20200601 = shoji.Workspace()  # Create a sub-workspace
 ```
 
+You can also use brackets to create a workspace with a name defined by an expression:
+
+```python
+name = "Hello" + "World"
+db[name] = shoji.Workspace()
+```
+
+You can list workspaces and check for the existence of a workspace in the usual ways:
+
+```python
+for ws in db:
+	... # do something with the workspace object
+
+if "samples" in db:
+	... # the workspace existed
+```
+
+You can list the contents of a workspace:
+
+```python
+ws._workspaces()  # Returns a list of names of sub-workspaces
+ws._tensors()     # Returns a list of names of tensors in the workspace
+ws._dimensions()  # Returns a list of names of dimensions in the workspace
+```
+
 You can delete a workspace using the `del` statement:
 
 ```python
@@ -87,6 +112,7 @@ import shoji
 import shoji.io
 from shoji.io import Compartment
 import h5py
+import pickle
 
 
 class Workspace:
@@ -404,3 +430,61 @@ class WorkspaceManager:
 				s += "</tr>"
 			s += "</table>"
 		return s
+
+	def _import(self, f: str):
+		"""
+		Import a previously exported workspace
+
+		Args:
+			f		The file name (full path)
+		"""
+
+		h5 = h5py.File(f, "r")
+		group = h5.require_group("shoji")
+		for att in group.attrs:
+			if att.startswith("Dimension$"):
+				shape = group.attrs[att]
+				if shape == -1:
+					shape = None
+				self[att[10:]] = shoji.Dimension(shape=shape)
+
+		for tname in group:
+			if tname.startswith("Tensor$"):
+				data = group[tname][:]
+				tensor = pickle.loads(group[tname])
+				if tensor.dtype == "string":
+					data = data.astype("object")
+				tname = tname[7:]
+				self[tname] = shoji.Tensor(tensor.dtype, tensor.dims, chunks=tensor.chunks, jagged=tensor.jagged, inits=data)
+
+		h5.close()
+
+	def _export(self, f: str):
+		"""
+		Export the workspace to an HDF5 file
+
+		Args:
+			f			The file name (full path)
+
+		Remarks:
+			If the file does not exist, it will be created
+		"""
+		h5 = h5py.File(f, "a")
+		group = h5.require_group("shoji")
+
+		for dname in self._dimensions():
+			dim = self._get_dimension(dname)
+			group.attrs["Dimension$" + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+		for tname in self._tensors():
+			tensor = self._get_tensor(tname)
+			if tensor.jagged:
+				logging.warning(f"Skipping '{tname}' because jagged tensors are not yet supported for export")
+				continue
+			group.attrs["Tensor$" + tname] = pickle.dumps(tensor)
+			data: np.ndarray = self[tname][:]
+			if tensor.dtype == "string":
+				data = data.astype(np.string_)
+			group.create_dataset(tname, data=data, compression="gzip")
+
+		h5.close()

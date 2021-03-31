@@ -153,6 +153,7 @@ those selected by the right-hand expression.
 from typing import Union, Optional
 import numpy as np
 import shoji
+import logging
 
 
 class Filter:
@@ -314,10 +315,12 @@ class ConstFilter(Filter):
 		return np.arange(self.left_operand.shape[0])
 
 	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
-		return shoji.io.const_compare(wsm._db.transaction, wsm, self.left_operand.name, self.operator, self.right_operand)
+		# TODO: this might cause concurrency problems when assigning to a filter expression
+		result = shoji.io.const_compare_non_transactional(wsm, self.left_operand.name, self.operator, self.right_operand)
+		return result
 
 	def __repr__(self) -> str:
-		return f"({self.left_operand} {self.operator} {self.right_operand})"
+		return f"({self.left_operand.name} {self.operator} {self.right_operand})"
 
 
 class DimensionSliceFilter(Filter):

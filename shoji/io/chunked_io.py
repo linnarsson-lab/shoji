@@ -3,7 +3,10 @@ import numpy as np
 import fdb
 import blosc
 from numpy.ma.core import MaskedArray
-import logging
+import time
+from multiprocessing import Pool, cpu_count
+from itertools import chain
+
 
 """
 # Chunked storage API
@@ -112,12 +115,28 @@ def read_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Directory
 	# logging.info(f"Read {addresses.shape[0]} chunks starting at {addresses[0]}, total of {n_bytes_read:,} bytes")
 	return chunks
 
+
 # Note: no @fdb.transactional decorator since this uses multiple transanctions inside the function
 def read_chunks_multibatch(db: fdb.impl.Database, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any, ...], addresses: np.ndarray) -> List[np.ndarray]:
-	n = len(addresses) # Start by attempting to read everything
-	n_total = n
-	ix = 0
 	chunks = []
+	n_total = len(addresses)
+	n = min(100, n_total)
+	# Read the first 100 chunks and measure the time it takes
+	time_at_start = time.time()
+	try:
+		chunks += read_chunks(db, subspace, key_prefix, addresses[:100])
+		ix = n
+		time_per_chunk = (time.time() - time_at_start) / n
+		# Aim for 2s batches
+		n = max(2, min(int(1 / time_per_chunk), n_total))
+	except fdb.impl.FDBError as e:
+		if e.code not in (1004, 1007, 1031, 2101):  # Too many bytes or too long time
+			raise e
+		ix = 0
+		time_per_chunk = (time.time() - time_at_start) / n
+		# Aim for 0.2s batches
+		n = max(1, min(int(0.2 / time_per_chunk), n_total))
+	print(f"Reading {key_prefix[-1]} at {time_per_chunk / 1000:.2} ms/chunk")
 	while ix < n_total:
 		try:
 			chunks += read_chunks(db, subspace, key_prefix, addresses[ix: ix + n])

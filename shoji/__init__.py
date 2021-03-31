@@ -41,7 +41,7 @@ such as `x`, `y`, `channel`, and `timepoint`. This makes Shoji fundamentally
 different from tabular (relational) databases, which struggle to represent multidimensional data.
 
 The fundamental operations in shoji are: *creating a tensor*, *appending values*, *reading values*, 
-*updating values*.
+*updating values*. Tensors can be deleted, but individual tensor values cannot.
 
 ### ACID guarantees
 
@@ -112,10 +112,10 @@ Let's create a workspace and fill it with some data:
 db.scRNA = shoji.Workspace()
 db.scRNA.cells = shoji.Dimension(shape=None)
 db.scRNA.genes = shoji.Dimension(shape=5000)
-db.scRNA.Expression = shoji.Tensor("int16", ("cells", "genes"), np.random.randint(0, 10, size=(1000, 5000), dtype="int16"))
-db.scRNA.Age = shoji.Tensor("uint16", ("cells",), np.random.randint(0, 50, size=1000, dtype="uint16"))
-db.scRNA.GeneLength = shoji.Tensor("uint16", ("genes",), np.random.randint(0, 5000, size=5000, dtype="uint16"))
-db.scRNA.Chromosome = shoji.Tensor("string", ("genes",), np.full(5000, "chr1", dtype="object"))
+db.scRNA.Expression = shoji.Tensor("int16", ("cells", "genes"), inits=np.random.randint(0, 10, size=(1000, 5000), dtype="int16"))
+db.scRNA.Age = shoji.Tensor("uint16", ("cells",), inits=np.random.randint(0, 50, size=1000, dtype="uint16"))
+db.scRNA.GeneLength = shoji.Tensor("uint16", ("genes",), inits=np.random.randint(0, 5000, size=5000, dtype="uint16"))
+db.scRNA.Chromosome = shoji.Tensor("string", ("genes",), inits=np.full(5000, "chr1", dtype="object"))
 ```
 
 Now we can query the database using `shoji.filter`s. We'll load the Expression matrix,

@@ -38,6 +38,58 @@ def const_compare(tr, wsm: "shoji.WorkspaceManager", name: str, operator: str, c
 	return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
 
 
+def const_compare_non_transactional(wsm: "shoji.WorkspaceManager", name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
+	"""
+	Compare a tensor to a constant value, and return all indices that match
+	"""
+	# Code for range, equality and inequality filters
+	tensor = wsm._get_tensor(name)
+	const = tensor.python_dtype()(const)  # Cast the const to string, float or int
+	index = wsm._subdir[Compartment.TensorIndex][name]
+	eq_range = index[const].range()
+	all_range = index.range()
+	start, stop = all_range.start, all_range.stop
+	tr = wsm._db.transaction  # This will typically (except inside a Transaction scope) be set to the database, so that each time it's used it will create a separeate transaction
+	if operator == "!=":
+		stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+		a = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
+		start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+		stop = all_range.stop
+		b = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
+		return np.concatenate([a, b])
+	if operator == "==":
+		start, stop = eq_range.start, eq_range.stop
+	elif operator == ">=":
+		start = eq_range.start
+	elif operator == ">":
+		start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+	elif operator == "<=":
+		stop = eq_range.stop
+	elif operator == "<":
+		stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+
+	tr = wsm._db.create_transaction()
+	n = 100_000
+	result = []
+	next_start = b''
+	while start < stop:
+		try:
+			temp = []
+			for k, _ in tr.get_range(start, stop, limit=n):
+				temp.append(index.unpack(k)[1])
+			next_start = tr.get_key(fdb.KeySelector.first_greater_than(k)).value
+			result += temp
+		except fdb.impl.FDBError as e:
+			if e.code in (1004, 1007, 1031, 2101) and n > 1:  # Too many bytes or too long time, so try again with less
+				n = max(1, n // 2)
+				tr = wsm._db.create_transaction()
+				continue
+			else:
+				raise e
+		start = next_start
+	return np.array(result, dtype="int64")
+
+
 def get_filtered_indices(wsm: "shoji.WorkspaceManager", tensor: "shoji.Tensor", filters: List["shoji.Filter"], axis: int, n_rows: int) -> np.ndarray:
 	indices = None
 	for f in filters:

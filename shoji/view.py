@@ -37,6 +37,25 @@ ws.Chromosome = shoji.Tensor("string", ("genes",))
 view = ws.scRNA[ws.Age > 10, ws.Chromosome == "chr1"]
 ```
 
+## Grouping
+
+Calling `.groupby(labels)` on a view creates a `shoji.groupby.GroupViewBy` object. 
+The `labels` should be the name of a tensor which is used to group the view.
+Calling an aggregation function such as `mean()` then returns the view but with
+all elements that share the same value of the `label` replaced by their mean.
+
+For example, suppose you have an Expression tensor with dimensions ("genes", "cells") and
+a ClusterID tensor with dimension ("cells",). Suppose there are 10 distinct values of
+ClusterID. The following code will return an np.ndarray of shape ("genes", 10) containing 
+mean values for each ClusterID:
+
+```python
+grouped = ws[:].groupby("ClusterID")
+(labels, values) = grouped.mean("Expression")
+# labels is a list of distinct ClusterID values
+# values is a np.ndarray where the "cells" dimension is replaced by the distinct cluster IDs
+```
+
 
 """
 from typing import Tuple, Callable, Union, List

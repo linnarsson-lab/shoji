@@ -48,12 +48,25 @@ dimension. For example, to add cells to a project with a <code>cells</code> dime
         &quot;Expression&quot;: np.random.randint(0, 10, size=(4, 5000), dtype=&quot;uint16&quot;)
 })
 </code></pre>
-<p>Note that if you leave out one of the tensors (of the ones that have <code>"samples"</code> as their first
-dimension), or supply data of inconsistent shape, the append method will raise an exception.</p>
+<p>Note that if you leave out one of the tensors (of the ones that have <code>"cells"</code> as one of their
+dimensions), or supply data of inconsistent shape, the append method will raise an exception.</p>
 <p>Appending data using this method is guaranteed to never fail with a partial row written (but may not
 complete all the rows successfully), and will never leave the database in an inconsistent state
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
 wrap the <code>append()</code> in a <code><a title="shoji.transaction.Transaction" href="transaction.html#shoji.transaction.Transaction">Transaction</a></code>.</p>
+<h2 id="grouping">Grouping</h2>
+<p>Calling <code>.groupby(labels)</code> on a dimension creates a <code><a title="shoji.groupby.GroupDimensionBy" href="groupby.html#shoji.groupby.GroupDimensionBy">GroupDimensionBy</a></code> object.
+The <code>labels</code> should be the name of a tensor which is used to group the dimension.
+Calling an aggregation function such as <code>mean()</code> then returns a grouped tensor.</p>
+<p>For example, suppose you have an Expression tensor with dimensions ("genes", "cells") and
+a ClusterID tensor with dimension ("cells",). Suppose there are 10 distinct values of
+ClusterID. The following code will return an np.ndarray of shape ("genes", 10) containing
+mean values for each ClusterID:</p>
+<pre><code class="python">grouped = ws.cells.groupby(&quot;ClusterID&quot;)
+(labels, values) = grouped.mean(&quot;Expression&quot;)
+# labels is a list of distinct ClusterID values
+# values is a np.ndarray where the &quot;cells&quot; dimension is replaced by the distinct cluster IDs
+</code></pre>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -97,13 +110,32 @@ db.scRNA.cells.append({
 })
 ```
 
-Note that if you leave out one of the tensors (of the ones that have `&#34;samples&#34;` as their first
-dimension), or supply data of inconsistent shape, the append method will raise an exception.
+Note that if you leave out one of the tensors (of the ones that have `&#34;cells&#34;` as one of their
+dimensions), or supply data of inconsistent shape, the append method will raise an exception.
 
 Appending data using this method is guaranteed to never fail with a partial row written (but may not
 complete all the rows successfully), and will never leave the database in an inconsistent state 
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
 wrap the `append()` in a `shoji.transaction.Transaction`.
+
+## Grouping
+
+Calling `.groupby(labels)` on a dimension creates a `shoji.groupby.GroupDimensionBy` object. 
+The `labels` should be the name of a tensor which is used to group the dimension.
+Calling an aggregation function such as `mean()` then returns a grouped tensor.
+
+For example, suppose you have an Expression tensor with dimensions (&#34;genes&#34;, &#34;cells&#34;) and
+a ClusterID tensor with dimension (&#34;cells&#34;,). Suppose there are 10 distinct values of
+ClusterID. The following code will return an np.ndarray of shape (&#34;genes&#34;, 10) containing 
+mean values for each ClusterID:
+
+```python
+grouped = ws.cells.groupby(&#34;ClusterID&#34;)
+(labels, values) = grouped.mean(&#34;Expression&#34;)
+# labels is a list of distinct ClusterID values
+# values is a np.ndarray where the &#34;cells&#34; dimension is replaced by the distinct cluster IDs
+```
+
 &#34;&#34;&#34;
 from typing import Optional, Dict, Union, List, Callable
 import numpy as np
@@ -115,7 +147,14 @@ class Dimension:
         &#34;&#34;&#34;
         Class representing a named dimension, which can be shared by multiple `shoji.tensor.Tensor`s
         &#34;&#34;&#34;
-        def __init__(self, *, shape: Optional[int], length: int = 0) -&gt; None:
+        def __init__(self, shape: Optional[int], length: int = 0) -&gt; None:
+                &#34;&#34;&#34;
+                Create a new Dimension
+
+                Args:
+                        shape           An integer, or None to create a variable-length dimension
+                        length          (do not use when creating a new Dimension)
+                &#34;&#34;&#34;
                 if shape == -1:
                         shape = None
                 if shape is not None and shape &lt; 0:
@@ -125,6 +164,15 @@ class Dimension:
                 self.length = length  # Actual length, will be set when dimension is read from db
                 self.name = &#34;&#34;  # Will be set if the Dimension is read from the db
                 self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
+
+        # Support pickling
+        def __getstate__(self):
+                &#34;&#34;&#34;Return state values to be pickled.&#34;&#34;&#34;
+                return (self.shape, self.length)
+
+        def __setstate__(self, state):
+                &#34;&#34;&#34;Restore state from the unpickled state values.&#34;&#34;&#34;
+                self.shape, self.length = state
 
         def __getitem__(self, key) -&gt; &#34;shoji.View&#34;:
                 if self.wsm is None:
@@ -154,7 +202,7 @@ class Dimension:
 
         def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -&gt; None:
                 &#34;&#34;&#34;
-                Append values to all tensors that have this as their first dimension
+                Append values to all tensors that have this as one of their dimensions
 
                 Args:
                         vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
@@ -168,37 +216,24 @@ class Dimension:
                 assert self.wsm is not None, &#34;Cannot append to unsaved dimension&#34;
                 assert self.shape is None, &#34;Cannot append to fixed-size dimension&#34;
 
-                # Check that all the values have same length
+                # Figure out the relevant axes
+                axes: List[int] = []
                 n_rows = -1
                 for name, values in vals.items():
                         assert isinstance(values, np.ndarray), f&#34;Input values must be numpy ndarrays, but &#39;{name}&#39; was {type(values)}&#34;
                         assert values.ndim &gt;= 1, f&#34;Input values must be at least 1-dimensional, but &#39;{name}&#39; was scalar&#34;
+                        tensor = self.wsm._get_tensor(name)
+                        assert self.name in tensor.dims, f&#34;Input values were provided for &#39;{name}&#39;, but &#39;{self.name}&#39; is not one of its dimensions&#34;
+                        axis = tensor.dims.index(self.name)
                         if n_rows == -1:
-                                n_rows = len(values)
-                        elif len(values) != n_rows:
+                                n_rows = values.shape[axis]
+                        elif values.shape[axis] != n_rows:
                                 raise ValueError(f&#34;Length (along first dimension) of tensors must be the same when appending, but &#39;{name}&#39; was length {len(values)} while other arrays were {n_rows} long&#34;)
+                        axes.append(axis)
 
-                n_bytes = 0
-                for name, val in vals.items():
-                        tv = shoji.TensorValue(val)
-                        n_bytes += tv.size_in_bytes()
-
-                n_bytes_per_transaction = 1_000_000  # Starting point, but we&#39;ll adapt it below
-                ix: int = 0
-                while ix &lt; n_rows:
-                        n_rows_per_transaction = int(max(1, n_rows / (n_bytes / n_bytes_per_transaction)))
-                        batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-                        try:
-                                n_bytes_written = shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
-                        except fdb.impl.FDBError as e:
-                                if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction &gt; 1:  # Too many bytes or too long time, so try again with less
-                                        n_bytes_per_transaction = max(1, n_bytes_per_transaction // 2)
-                                        continue
-                                else:
-                                        raise e
-                        if n_bytes_written &lt; n_bytes_per_transaction // 2:  # Not enough bytes, so increase for next round
-                                n_bytes_per_transaction *= 2
-                        ix += n_rows_per_transaction</code></pre>
+                names = list(vals.keys())
+                values = [shoji.TensorValue(x) for x in vals.values()]
+                shoji.io.append_values_multibatch(self.wsm, names, values, tuple(axes))</code></pre>
 </details>
 </section>
 <section>
@@ -212,10 +247,16 @@ class Dimension:
 <dl>
 <dt id="shoji.dimension.Dimension"><code class="flex name class">
 <span>class <span class="ident">Dimension</span></span>
-<span>(</span><span>*, shape: Union[int, NoneType], length: int = 0)</span>
+<span>(</span><span>shape: Union[int, NoneType], length: int = 0)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Class representing a named dimension, which can be shared by multiple <code><a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a></code>s</p></div>
+<div class="desc"><p>Class representing a named dimension, which can be shared by multiple <code><a title="shoji.tensor.Tensor" href="tensor.html#shoji.tensor.Tensor">Tensor</a></code>s</p>
+<p>Create a new Dimension</p>
+<h2 id="args">Args</h2>
+<p>shape
+An integer, or None to create a variable-length dimension
+length
+(do not use when creating a new Dimension)</p></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -224,7 +265,14 @@ class Dimension:
         &#34;&#34;&#34;
         Class representing a named dimension, which can be shared by multiple `shoji.tensor.Tensor`s
         &#34;&#34;&#34;
-        def __init__(self, *, shape: Optional[int], length: int = 0) -&gt; None:
+        def __init__(self, shape: Optional[int], length: int = 0) -&gt; None:
+                &#34;&#34;&#34;
+                Create a new Dimension
+
+                Args:
+                        shape           An integer, or None to create a variable-length dimension
+                        length          (do not use when creating a new Dimension)
+                &#34;&#34;&#34;
                 if shape == -1:
                         shape = None
                 if shape is not None and shape &lt; 0:
@@ -234,6 +282,15 @@ class Dimension:
                 self.length = length  # Actual length, will be set when dimension is read from db
                 self.name = &#34;&#34;  # Will be set if the Dimension is read from the db
                 self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
+
+        # Support pickling
+        def __getstate__(self):
+                &#34;&#34;&#34;Return state values to be pickled.&#34;&#34;&#34;
+                return (self.shape, self.length)
+
+        def __setstate__(self, state):
+                &#34;&#34;&#34;Restore state from the unpickled state values.&#34;&#34;&#34;
+                self.shape, self.length = state
 
         def __getitem__(self, key) -&gt; &#34;shoji.View&#34;:
                 if self.wsm is None:
@@ -263,7 +320,7 @@ class Dimension:
 
         def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -&gt; None:
                 &#34;&#34;&#34;
-                Append values to all tensors that have this as their first dimension
+                Append values to all tensors that have this as one of their dimensions
 
                 Args:
                         vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
@@ -277,37 +334,24 @@ class Dimension:
                 assert self.wsm is not None, &#34;Cannot append to unsaved dimension&#34;
                 assert self.shape is None, &#34;Cannot append to fixed-size dimension&#34;
 
-                # Check that all the values have same length
+                # Figure out the relevant axes
+                axes: List[int] = []
                 n_rows = -1
                 for name, values in vals.items():
                         assert isinstance(values, np.ndarray), f&#34;Input values must be numpy ndarrays, but &#39;{name}&#39; was {type(values)}&#34;
                         assert values.ndim &gt;= 1, f&#34;Input values must be at least 1-dimensional, but &#39;{name}&#39; was scalar&#34;
+                        tensor = self.wsm._get_tensor(name)
+                        assert self.name in tensor.dims, f&#34;Input values were provided for &#39;{name}&#39;, but &#39;{self.name}&#39; is not one of its dimensions&#34;
+                        axis = tensor.dims.index(self.name)
                         if n_rows == -1:
-                                n_rows = len(values)
-                        elif len(values) != n_rows:
+                                n_rows = values.shape[axis]
+                        elif values.shape[axis] != n_rows:
                                 raise ValueError(f&#34;Length (along first dimension) of tensors must be the same when appending, but &#39;{name}&#39; was length {len(values)} while other arrays were {n_rows} long&#34;)
+                        axes.append(axis)
 
-                n_bytes = 0
-                for name, val in vals.items():
-                        tv = shoji.TensorValue(val)
-                        n_bytes += tv.size_in_bytes()
-
-                n_bytes_per_transaction = 1_000_000  # Starting point, but we&#39;ll adapt it below
-                ix: int = 0
-                while ix &lt; n_rows:
-                        n_rows_per_transaction = int(max(1, n_rows / (n_bytes / n_bytes_per_transaction)))
-                        batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-                        try:
-                                n_bytes_written = shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
-                        except fdb.impl.FDBError as e:
-                                if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction &gt; 1:  # Too many bytes or too long time, so try again with less
-                                        n_bytes_per_transaction = max(1, n_bytes_per_transaction // 2)
-                                        continue
-                                else:
-                                        raise e
-                        if n_bytes_written &lt; n_bytes_per_transaction // 2:  # Not enough bytes, so increase for next round
-                                n_bytes_per_transaction *= 2
-                        ix += n_rows_per_transaction</code></pre>
+                names = list(vals.keys())
+                values = [shoji.TensorValue(x) for x in vals.values()]
+                shoji.io.append_values_multibatch(self.wsm, names, values, tuple(axes))</code></pre>
 </details>
 <h3>Methods</h3>
 <dl>
@@ -315,7 +359,7 @@ class Dimension:
 <span>def <span class="ident">append</span></span>(<span>self, vals: Dict[str, Union[List[numpy.ndarray], numpy.ndarray]]) ‑> NoneType</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Append values to all tensors that have this as their first dimension</p>
+<div class="desc"><p>Append values to all tensors that have this as one of their dimensions</p>
 <h2 id="args">Args</h2>
 <dl>
 <dt><strong><code>vals</code></strong></dt>
@@ -332,7 +376,7 @@ tensors will have the same length along the dimension.</p></div>
 </summary>
 <pre><code class="python">def append(self, vals: Dict[str, Union[List[np.ndarray], np.ndarray]]) -&gt; None:
         &#34;&#34;&#34;
-        Append values to all tensors that have this as their first dimension
+        Append values to all tensors that have this as one of their dimensions
 
         Args:
                 vals: Dict mapping tensor names (`str`) to tensor values (`np.ndarray`)
@@ -346,37 +390,24 @@ tensors will have the same length along the dimension.</p></div>
         assert self.wsm is not None, &#34;Cannot append to unsaved dimension&#34;
         assert self.shape is None, &#34;Cannot append to fixed-size dimension&#34;
 
-        # Check that all the values have same length
+        # Figure out the relevant axes
+        axes: List[int] = []
         n_rows = -1
         for name, values in vals.items():
                 assert isinstance(values, np.ndarray), f&#34;Input values must be numpy ndarrays, but &#39;{name}&#39; was {type(values)}&#34;
                 assert values.ndim &gt;= 1, f&#34;Input values must be at least 1-dimensional, but &#39;{name}&#39; was scalar&#34;
+                tensor = self.wsm._get_tensor(name)
+                assert self.name in tensor.dims, f&#34;Input values were provided for &#39;{name}&#39;, but &#39;{self.name}&#39; is not one of its dimensions&#34;
+                axis = tensor.dims.index(self.name)
                 if n_rows == -1:
-                        n_rows = len(values)
-                elif len(values) != n_rows:
+                        n_rows = values.shape[axis]
+                elif values.shape[axis] != n_rows:
                         raise ValueError(f&#34;Length (along first dimension) of tensors must be the same when appending, but &#39;{name}&#39; was length {len(values)} while other arrays were {n_rows} long&#34;)
+                axes.append(axis)
 
-        n_bytes = 0
-        for name, val in vals.items():
-                tv = shoji.TensorValue(val)
-                n_bytes += tv.size_in_bytes()
-
-        n_bytes_per_transaction = 1_000_000  # Starting point, but we&#39;ll adapt it below
-        ix: int = 0
-        while ix &lt; n_rows:
-                n_rows_per_transaction = int(max(1, n_rows / (n_bytes / n_bytes_per_transaction)))
-                batch = {k: v[ix: ix + n_rows_per_transaction] for k, v in vals.items()}
-                try:
-                        n_bytes_written = shoji.io.append_tensors(self.wsm._db.transaction, self.wsm, self.name, batch)
-                except fdb.impl.FDBError as e:
-                        if e.code in (1004, 1007, 1031, 2101) and n_rows_per_transaction &gt; 1:  # Too many bytes or too long time, so try again with less
-                                n_bytes_per_transaction = max(1, n_bytes_per_transaction // 2)
-                                continue
-                        else:
-                                raise e
-                if n_bytes_written &lt; n_bytes_per_transaction // 2:  # Not enough bytes, so increase for next round
-                        n_bytes_per_transaction *= 2
-                ix += n_rows_per_transaction</code></pre>
+        names = list(vals.keys())
+        values = [shoji.TensorValue(x) for x in vals.values()]
+        shoji.io.append_values_multibatch(self.wsm, names, values, tuple(axes))</code></pre>
 </details>
 </dd>
 <dt id="shoji.dimension.Dimension.groupby"><code class="name flex">
@@ -403,6 +434,7 @@ tensors will have the same length along the dimension.</p></div>
 <ul>
 <li><a href="#overview">Overview</a></li>
 <li><a href="#adding-data-along-a-dimension">Adding data along a dimension</a></li>
+<li><a href="#grouping">Grouping</a></li>
 </ul>
 </div>
 <ul id="index">

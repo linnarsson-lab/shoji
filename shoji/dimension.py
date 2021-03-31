@@ -44,6 +44,25 @@ Appending data using this method is guaranteed to never fail with a partial row 
 complete all the rows successfully), and will never leave the database in an inconsistent state 
 (e.g. with data appended to only one of the tensors). If you need a stronger guarantee of success/failure,
 wrap the `append()` in a `shoji.transaction.Transaction`.
+
+## Grouping
+
+Calling `.groupby(labels)` on a dimension creates a `shoji.groupby.GroupDimensionBy` object. 
+The `labels` should be the name of a tensor which is used to group the dimension.
+Calling an aggregation function such as `mean()` then returns a grouped tensor.
+
+For example, suppose you have an Expression tensor with dimensions ("genes", "cells") and
+a ClusterID tensor with dimension ("cells",). Suppose there are 10 distinct values of
+ClusterID. The following code will return an np.ndarray of shape ("genes", 10) containing 
+mean values for each ClusterID:
+
+```python
+grouped = ws.cells.groupby("ClusterID")
+(labels, values) = grouped.mean("Expression")
+# labels is a list of distinct ClusterID values
+# values is a np.ndarray where the "cells" dimension is replaced by the distinct cluster IDs
+```
+
 """
 from typing import Optional, Dict, Union, List, Callable
 import numpy as np
