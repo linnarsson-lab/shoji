@@ -174,5 +174,5 @@ from .workspace import Workspace, WorkspaceManager
 from .connect import connect
 from .filter import Filter, CompoundFilter, TensorFilter, ConstFilter, DimensionBoolFilter, DimensionIndicesFilter, DimensionSliceFilter, TensorBoolFilter, TensorIndicesFilter, TensorSliceFilter
 from .transaction import Transaction
-from .groupby import GroupViewBy, GroupDimensionBy
+from .groupby import GroupViewBy, GroupDimensionBy, Accumulator
 from .view import View

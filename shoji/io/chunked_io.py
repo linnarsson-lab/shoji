@@ -120,11 +120,11 @@ def read_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Directory
 def read_chunks_multibatch(db: fdb.impl.Database, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any, ...], addresses: np.ndarray) -> List[np.ndarray]:
 	chunks = []
 	n_total = len(addresses)
-	n = min(100, n_total)
+	n = min(200, n_total)
 	# Read the first 100 chunks and measure the time it takes
 	time_at_start = time.time()
 	try:
-		chunks += read_chunks(db, subspace, key_prefix, addresses[:100])
+		chunks += read_chunks(db, subspace, key_prefix, addresses[:200])
 		ix = n
 		time_per_chunk = (time.time() - time_at_start) / n
 		# Aim for 2s batches
@@ -136,7 +136,7 @@ def read_chunks_multibatch(db: fdb.impl.Database, subspace: fdb.directory_impl.D
 		time_per_chunk = (time.time() - time_at_start) / n
 		# Aim for 0.2s batches
 		n = max(1, min(int(0.2 / time_per_chunk), n_total))
-	print(f"Reading {key_prefix[-1]} at {time_per_chunk / 1000:.2} ms/chunk")
+	# print(f"Reading {key_prefix[-1]} at {time_per_chunk * 1000:.2} ms/chunk")
 	while ix < n_total:
 		try:
 			chunks += read_chunks(db, subspace, key_prefix, addresses[ix: ix + n])
