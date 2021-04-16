@@ -166,7 +166,7 @@ Perform complex database operations atomically.
 
 """
 import fdb
-fdb.api_version(620)
+fdb.api_version(630)
 
 from .dimension import Dimension
 from .tensor import Tensor, TensorValue
