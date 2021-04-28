@@ -177,7 +177,11 @@ ws.Image = shoji.Tensor("uint16", ("cells", "channels", "timepoints", None, None
 In this examples, `Image` is a 5-dimensional tensor, where the last two dimensions 
 have variable length.
 """
-from typing import Tuple, Union, List, Optional, Callable, Literal
+from typing import Tuple, Union, List, Optional, Callable
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import numpy as np
 import shoji
 import sys
