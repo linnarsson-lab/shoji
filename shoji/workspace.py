@@ -133,9 +133,9 @@ class WorkspaceManager:
 		self._path = path
 		self._name: str = ""
 
-	def _move_to(self, new_path: Union[str, Tuple[str]]) -> None:
-		if not isinstance(new_path, tuple):
-			new_path = (new_path,)
+	def _move_to(self, new_path: Union[str, Tuple[str, ...]]) -> None:
+		if isinstance(new_path, str):
+			new_path = tuple(new_path.split("."))
 		self._subdir = self._subdir.move_to(self._db.transaction, ("shoji",) + new_path)
 		self._path = new_path
 		
