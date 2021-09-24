@@ -255,13 +255,13 @@ class TensorValue:
 		n_bytes = 0
 		if not self.jagged:
 			if self.dtype == "string":
-				n_bytes += sum([len(s) for s in self.values]) * 2
+				n_bytes += sum([len(s) + 1 for s in self.values]) * 2
 			else:
 				n_bytes += self.values.size * self.values.itemsize  # type: ignore
 		else:
 			for row in self.values:
 				if self.dtype == "string":
-					n_bytes += sum([len(s) for s in row]) * 2
+					n_bytes += sum([len(s) + 1 for s in row]) * 2
 				else:
 					n_bytes += row.size * row.itemsize
 		return n_bytes

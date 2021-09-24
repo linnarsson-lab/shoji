@@ -295,7 +295,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", names
 					raise ValueError(f"Cannot append {vals.shape[i]} elements to tensor of length {tensor.shape[i]} along axis {i}, when another tensor will be {new_length} long along the same dimension")
 				new_length = tensor.shape[i] + vals.shape[i]  # new_length will be the same for every tensor, since they start the same, and we checked above that the values are the same length
 			else:
-				if tensor.shape[i] != 0 and tensor.shape[i] != vals.shape[i]:
+				if tensor.shape[i] != 0 and tensor.shape[i] != vals.shape[i] and not tensor.jagged:
 					raise ValueError(f"Cannot append values of shape {vals.shape} to tensor of shape {tensor.shape} along axis {axis}")
 
 	# Check that all relevant tensors will have the right length after appending
