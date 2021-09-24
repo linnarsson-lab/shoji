@@ -481,7 +481,7 @@ class WorkspaceManager:
 			if tensor.jagged:
 				logging.warning(f"Skipping '{tname}' because jagged tensors are not yet supported for export")
 				continue
-			group.attrs["Tensor$" + tname] = pickle.dumps(tensor)
+			group.attrs["Tensor$" + tname] = pickle.dumps(tensor, protocol=4)
 			data: np.ndarray = self[tname][:]
 			if tensor.dtype == "string":
 				data = data.astype(np.string_)

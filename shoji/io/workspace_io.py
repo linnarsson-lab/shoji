@@ -129,4 +129,4 @@ def create_dimension(tr, wsm: "shoji.WorkspaceManager", name: str, dim: shoji.Di
 			else:
 				dim.length = prev_dim.length
 	# Create or update the dimension
-	tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim)
+	tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim, protocol=4)

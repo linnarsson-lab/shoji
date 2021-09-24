@@ -45,7 +45,7 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 		tensor.shape = (0,) * tensor.rank
 	if tensor.inits is not None:
 		tensor.initializing = True
-	tr[key] = pickle.dumps(tensor)
+	tr[key] = pickle.dumps(tensor, protocol=4)
 		
 
 def initialize_tensor(wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor):
@@ -71,7 +71,7 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager
 	# Update the tensor definition to clear the initializing flag
 	subdir = wsm._subdir
 	key = subdir.pack((Compartment.Tensors, name))
-	tr[key] = pickle.dumps(tensor)
+	tr[key] = pickle.dumps(tensor, protocol=4)
 
 	# Update the dimensions
 	if tensor.rank > 0:
@@ -94,7 +94,7 @@ def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 	if shape is not None:
 		tensor.shape = shape
 	key = subdir.pack((Compartment.Tensors, name))
-	tr[key] = pickle.dumps(tensor)
+	tr[key] = pickle.dumps(tensor, protocol=4)
 
 @fdb.transactional
 def write_at_indices(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray) -> int:
