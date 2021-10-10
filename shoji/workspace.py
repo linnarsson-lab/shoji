@@ -350,7 +350,7 @@ class WorkspaceManager:
 				name = fix_name(name, "layer", ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
 				dtype = ds.layers[key].dtype.name
 				dtype = "string" if dtype == "object" else dtype
-				if name == "Expression" and fix_expression_dtype:
+				if name in ("Expression", "Spliced", "Unspliced") and fix_expression_dtype:
 					dtype = "uint16"
 				self[name] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=ds.layers[key][:, :].T.astype(dtype))
 			
