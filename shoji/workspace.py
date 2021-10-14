@@ -339,8 +339,8 @@ class WorkspaceManager:
 
 			if verbose:
 				logging.info("Loading layers")
-			u = ds.layers["unspliced"][:, :].T.astype("unit16")
-			s = ds.layers["spliced"][:, :].T.astype("unit16")
+			u = ds.layers["unspliced"][:, :].T.astype("uint16")
+			s = ds.layers["spliced"][:, :].T.astype("uint16")
 			self["Unspliced"] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=u)
 			self["Expression"] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=u + s)
 			
