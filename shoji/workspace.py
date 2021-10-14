@@ -281,16 +281,13 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
-	def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None, *, fix_expression_dtype: bool = False) -> None:
+	def _from_loom(self, f: str, verbose: bool = False) -> None:
 		"""
 		Load a loom files into a workspace
 
 		Args:
 			f						Filename (full path)
-			layers					Layers to load, or None to load all layers
 			verbose					If true, log progress
-			dimension_names			2-tuple of strings to use as dimension names for (rows, cols), or None to use ("genes", "cells")
-			fix_expression_dtype	If true, fix a legacy mistake in some loom files where the main matrix is float32 but should be uint16
 		"""
 
 		def fix_name(name, suffix, other_names):
@@ -302,13 +299,10 @@ class WorkspaceManager:
 			name = name.replace(".", "_")
 			return name
 
-		if dimension_names is None:
-			dimension_names = ("genes", "cells")
+		dimension_names = ("genes", "cells")
 		genes_dim = dimension_names[0]
 		cells_dim = dimension_names[1]
 		with loompy.connect(f, validate=False) as ds:
-			if layers is None:
-				layers = list(ds.layers.keys())
 			self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
 			self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
@@ -345,14 +339,10 @@ class WorkspaceManager:
 
 			if verbose:
 				logging.info("Loading layers")
-			for key in layers:
-				name = "Expression" if key == "" else key
-				name = fix_name(name, "layer", ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
-				dtype = ds.layers[key].dtype.name
-				dtype = "string" if dtype == "object" else dtype
-				if name in ("Expression", "Spliced", "Unspliced") and fix_expression_dtype:
-					dtype = "uint16"
-				self[name] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=ds.layers[key][:, :].T.astype(dtype))
+			u = ds.layers["unspliced"][:, :].T.astype("unit16")
+			s = ds.layers["spliced"][:, :].T.astype("unit16")
+			self["Unspliced"] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=u)
+			self["Expression"] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=u + s)
 			
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
