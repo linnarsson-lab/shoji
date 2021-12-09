@@ -113,6 +113,7 @@ import shoji.io
 from shoji.io import Compartment
 import h5py
 import pickle
+from codecs import decode,encode
 
 
 class Workspace:
@@ -441,7 +442,7 @@ class WorkspaceManager:
 		for tname in group:
 			if tname.startswith("Tensor$"):
 				data = group[tname][:]
-				tensor = pickle.loads(group[tname])
+				tensor = pickle.loads(decode(group[tname], "base64"))
 				if tensor.dtype == "string":
 					data = data.astype("object")
 				tname = tname[7:]
@@ -471,10 +472,10 @@ class WorkspaceManager:
 			if tensor.jagged:
 				logging.warning(f"Skipping '{tname}' because jagged tensors are not yet supported for export")
 				continue
-			group.attrs["Tensor$" + tname] = pickle.dumps(tensor, protocol=4)
+			group.attrs["Tensor$" + tname] = encode(pickle.dumps(tensor, protocol=4), "base-64")
 			data: np.ndarray = self[tname][:]
 			if tensor.dtype == "string":
 				data = data.astype(np.string_)
-			group.create_dataset(tname, data=data, compression="gzip")
+			group.create_dataset(tname, data=data, compression="gzip" if tensor.rank > 0 else None)
 
 		h5.close()
