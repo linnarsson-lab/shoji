@@ -475,7 +475,7 @@ class WorkspaceManager:
 			group.attrs["Tensor$" + tname] = encode(pickle.dumps(tensor, protocol=4), "base-64")
 			data: np.ndarray = self[tname][:]
 			if tensor.dtype == "string":
-				data = data.astype(np.string_)
+				data = data.astype("object")
 			group.create_dataset(tname, data=data, compression="gzip" if tensor.rank > 0 else None)
 
 		h5.close()
