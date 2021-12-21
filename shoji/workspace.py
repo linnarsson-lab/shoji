@@ -485,7 +485,7 @@ class WorkspaceManager:
 					ds = group.create_dataset(tname, shape=tensor.shape, data=self[tname][:], dtype=dtype, compression=None)
 				else:
 					ds = group.create_dataset(tname, shape=tensor.shape, dtype=dtype, compression="gzip")
-					BATCH_SIZE = tensor.chunks[0] * 1000
+					BATCH_SIZE = tensor.chunks[0] * 100
 					for ix in trange(0, tensor.shape[0], BATCH_SIZE, desc=tname):
 						end = min(ix + BATCH_SIZE, tensor.shape[0])
 						data: np.ndarray = self[tname][ix:end]
