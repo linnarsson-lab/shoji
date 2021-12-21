@@ -116,7 +116,7 @@ import pickle
 from codecs import decode,encode
 from tqdm import trange
 
-
+	
 class Workspace:
 	"""
 	Class representing a new Workspace. Use this to create new workspaces in Shoji.
@@ -141,7 +141,7 @@ class WorkspaceManager:
 		self._subdir = self._subdir.move_to(self._db.transaction, ("shoji",) + new_path)
 		self._path = new_path
 		
-	def _create(self, path: Union[str, Tuple[str]]) -> "WorkspaceManager":
+	def _create(self, path: Union[str, Tuple[str, ...]]) -> "WorkspaceManager":
 		if not isinstance(path, tuple):
 			path = (path,)
 		if self._subdir.exists(self._db.transaction, path):
@@ -494,3 +494,14 @@ class WorkspaceManager:
 						except OSError as e:
 							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
 							raise e
+
+def create_workspace(db: "WorkspaceManager", path: str) -> "WorkspaceManager":
+	"""
+	Create a new workspace with the given path, unless it already exists
+
+	Args:
+		db:			The root workspace from which the path should begin
+		path:		The path, relative to the root
+	"""
+
+	return db._create(tuple(path.split(".")))
