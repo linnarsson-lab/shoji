@@ -114,6 +114,7 @@ from shoji.io import Compartment
 import h5py
 import pickle
 from codecs import decode,encode
+from tqdm import trange
 
 
 class Workspace:
@@ -223,7 +224,7 @@ class WorkspaceManager:
 			else:
 				raise ValueError("First part of a multi-part name must be a workspace")
 
-	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["WorkspaceManager", shoji.Dimension, "shoji.View", "shoji.NonTransactionalView", shoji.Tensor]:
+	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["WorkspaceManager", shoji.Dimension, "shoji.View", shoji.Tensor]:
 		# Try to read an attribute on the object
 		if isinstance(expr, str):
 			return self.__getattr__(expr)
@@ -460,24 +461,36 @@ class WorkspaceManager:
 		Remarks:
 			If the file does not exist, it will be created
 		"""
-		h5 = h5py.File(f, "a")
-		group = h5.require_group("shoji")
+		if os.path.exists(f):
+			os.remove(f)
+		with h5py.File(f, "w") as h5:
+			group = h5.require_group("shoji")
 
-		for dname in self._dimensions():
-			dim = self._get_dimension(dname)
-			group.attrs["Dimension$" + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+			for dname in self._dimensions():
+				dim = self._get_dimension(dname)
+				group.attrs["Dimension$" + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
 
-		for tname in self._tensors():
-			tensor = self._get_tensor(tname)
-			if tensor.jagged:
-				logging.warning(f"Skipping '{tname}' because jagged tensors are not yet supported for export")
-				continue
-			group.attrs["Tensor$" + tname] = encode(pickle.dumps(tensor, protocol=4), "base-64")
-			data: np.ndarray = self[tname][:]
-			if tensor.dtype == "string":
-				data = data.astype(object)
-				group.create_dataset(tname, data=data, dtype=h5py.special_dtype(vlen=str), compression="gzip" if tensor.rank > 0 else None)
-			else:
-				group.create_dataset(tname, data=data, compression="gzip" if tensor.rank > 0 else None)
-
-		h5.close()
+			for tname in self._tensors():
+				tensor = self._get_tensor(tname)
+				if tensor.jagged:
+					logging.warning(f"Skipping '{tname}' because jagged tensors are not yet supported for export")
+					continue
+				group.attrs["Tensor$" + tname] = encode(pickle.dumps(tensor, protocol=4), "base-64")
+				
+				dtype = tensor.dtype
+				if tensor.dtype == "string":
+					dtype = h5py.special_dtype(vlen=str)
+				
+				if tensor.rank == 0:
+					ds = group.create_dataset(tname, shape=tensor.shape, data=self[tname][:], dtype=dtype, compression=None)
+				else:
+					ds = group.create_dataset(tname, shape=tensor.shape, dtype=dtype, compression="gzip")
+					BATCH_SIZE = tensor.chunks[0] * 1000
+					for ix in trange(0, tensor.shape[0], BATCH_SIZE, desc=tname):
+						end = min(ix + BATCH_SIZE, tensor.shape[0])
+						data: np.ndarray = self[tname][ix:end]
+						try:
+							ds[ix: end] = data
+						except OSError as e:
+							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
+							raise e
