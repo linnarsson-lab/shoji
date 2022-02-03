@@ -10,7 +10,7 @@ from .enums import Compartment
 """
 
 @fdb.transactional
-def get_entity(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> Optional[Union[shoji.Dimension, shoji.Tensor, "shoji.WorkspaceManager"]]:
+def get_entity(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str) -> Optional[Union[shoji.Dimension, shoji.Tensor, "shoji.Workspace"]]:
 	t = get_tensor(tr, wsm, name)
 	if t is not None:
 		return t
@@ -24,18 +24,18 @@ def get_entity(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: st
 
 
 @fdb.transactional
-def get_workspace(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> Optional["shoji.WorkspaceManager"]:
+def get_workspace(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str) -> Optional["shoji.Workspace"]:
 	subdir = wsm._subdir
 	if subdir.exists(tr, name):
 		child = subdir.open(tr, name)
-		wsm = shoji.WorkspaceManager(wsm._db, child, wsm._path + (name,))
+		wsm = shoji.Workspace(wsm._db, child, wsm._path + (name,))
 		wsm._name = name
 		return wsm
 	return None
 
 
 @fdb.transactional
-def get_dimension(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> Optional[shoji.Dimension]:
+def get_dimension(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str) -> Optional[shoji.Dimension]:
 	subdir = wsm._subdir
 	val = tr[subdir[Compartment.Dimensions][name]]
 	if val.present():
@@ -47,7 +47,7 @@ def get_dimension(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 
 
 @fdb.transactional
-def get_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, include_initializing: bool = False) -> Optional[shoji.Tensor]:
+def get_tensor(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str, include_initializing: bool = False) -> Optional[shoji.Tensor]:
 	subdir = wsm._subdir
 	val = tr[subdir.pack((Compartment.Tensors, name))]
 	if val.present():
@@ -61,12 +61,12 @@ def get_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: st
 
 
 @fdb.transactional
-def list_workspaces(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager") -> List["shoji.WorkspaceManager"]:
+def list_workspaces(tr: fdb.impl.Transaction, wsm: "shoji.Workspace") -> List["shoji.Workspace"]:
 	return [get_workspace(tr, wsm, name) for name in wsm._subdir.list(tr)]
 
 
 @fdb.transactional
-def list_dimensions(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager") -> List[shoji.Dimension]:
+def list_dimensions(tr: fdb.impl.Transaction, wsm: "shoji.Workspace") -> List[shoji.Dimension]:
 	result = []
 	for kv in tr[wsm._subdir[Compartment.Dimensions].range()]:
 		dim = pickle.loads(kv.value)
@@ -77,7 +77,7 @@ def list_dimensions(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager") -> 
 
 
 @fdb.transactional
-def list_tensors(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", include_initializing: bool = False) -> List[shoji.Tensor]:
+def list_tensors(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", include_initializing: bool = False) -> List[shoji.Tensor]:
 	result = []
 	for kv in tr[wsm._subdir[Compartment.Tensors].range()]:
 		tensor = pickle.loads(kv.value)
@@ -90,7 +90,7 @@ def list_tensors(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", includ
 
 
 @fdb.transactional
-def delete_entity(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> None:
+def delete_entity(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str) -> None:
 	subdir = wsm._subdir
 	if subdir.exists(tr, name):
 		tr.clear_range_startswith(subdir.key())
@@ -105,7 +105,7 @@ def delete_entity(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 
 
 @fdb.transactional
-def create_dimension(tr, wsm: "shoji.WorkspaceManager", name: str, dim: shoji.Dimension):
+def create_dimension(tr, wsm: "shoji.Workspace", name: str, dim: shoji.Dimension):
 	"""
 	Create a dimension in the workspace, overwriting any existing dimension of the same name
 	"""

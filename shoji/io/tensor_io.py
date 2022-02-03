@@ -15,7 +15,7 @@ which are translated to and from chunks as needed.
 """
 
 @fdb.transactional
-def create_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor) -> None:
+def create_tensor(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str, tensor: shoji.Tensor) -> None:
 	"""
 	Creates a new tensor (but does not write the inits)
 
@@ -48,7 +48,7 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 	tr[key] = pickle.dumps(tensor, protocol=4)
 		
 
-def initialize_tensor(wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor):
+def initialize_tensor(wsm: "shoji.Workspace", name: str, tensor: shoji.Tensor):
 	if tensor.inits is not None:
 		if tensor.rank == 0:
 			write_at_indices(wsm._db.transaction, wsm, (Compartment.TensorValues, name), indices=[], chunk_sizes=(), values=tensor.inits.values)
@@ -64,7 +64,7 @@ def initialize_tensor(wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Te
 
 
 @fdb.transactional
-def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> None:
+def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str) -> None:
 	tensor = shoji.io.get_tensor(tr, wsm, name, include_initializing=True)
 	assert tensor.initializing
 	tensor.initializing = False
@@ -86,7 +86,7 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager
 
 
 @fdb.transactional
-def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, *, dims: Optional[Tuple[str, int, None]] = None, shape: Optional[Tuple[int]] = None) -> None:
+def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str, *, dims: Optional[Tuple[str, int, None]] = None, shape: Optional[Tuple[int]] = None) -> None:
 	subdir = wsm._subdir
 	tensor = wsm._get_tensor(name, include_initializing=True)
 	if dims is not None:
@@ -97,7 +97,7 @@ def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 	tr[key] = pickle.dumps(tensor, protocol=4)
 
 @fdb.transactional
-def write_at_indices(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray) -> int:
+def write_at_indices(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray) -> int:
 	"""
 	Write values corresponding to indices along each dimension (row indices, column indices, ...), automatically managing chunks as needed
 
@@ -161,7 +161,7 @@ def write_at_indices(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", ke
 	return shoji.io.write_chunks(tr, subspace, key_prefix, addresses, chunks)
 
 
-def read_at_indices(wsm: "shoji.WorkspaceManager", tensor: str, indices: List[np.ndarray], chunk_sizes: Tuple[int, ...], transactional: bool = True) -> np.ndarray:
+def read_at_indices(wsm: "shoji.Workspace", tensor: str, indices: List[np.ndarray], chunk_sizes: Tuple[int, ...], transactional: bool = True) -> np.ndarray:
 	"""
 	Read values corresponding to indices along each dimension (row indices, column indices, ...), automatically managing chunks as needed
 
@@ -238,7 +238,7 @@ def dtype_class(dtype) -> Union[Type[int], Type[float], Type[bool], Type[str]]:
 	
 
 @fdb.transactional
-def append_values(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", names: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
+def append_values(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", names: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
 	"""
 	Returns:
 		Number of bytes written
@@ -356,7 +356,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", names
 		shoji.io.create_dimension(tr, wsm, dname, dim)
 	return n_bytes_written
 
-def append_values_multibatch(wsm: "shoji.WorkspaceManager", tensors: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
+def append_values_multibatch(wsm: "shoji.Workspace", tensors: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
 	"""
 	Append values to a set of tensors, using multiple batches (transactions) if needed.
 

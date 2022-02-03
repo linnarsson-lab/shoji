@@ -14,7 +14,7 @@ import shoji
 
 
 class Transaction:
-    def __init__(self, wsm: shoji.WorkspaceManager) -> None:
+    def __init__(self, wsm: shoji.Workspace) -> None:
         self.db = wsm._db
           
     def __enter__(self):

@@ -7,7 +7,7 @@ from .enums import Compartment
 
 
 @fdb.transactional
-def const_compare(tr, wsm: "shoji.WorkspaceManager", name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
+def const_compare(tr, wsm: "shoji.Workspace", name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
 	"""
 	Compare a tensor to a constant value, and return all indices that match
 	"""
@@ -38,7 +38,7 @@ def const_compare(tr, wsm: "shoji.WorkspaceManager", name: str, operator: str, c
 	return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype="int64")
 
 
-def const_compare_non_transactional(wsm: "shoji.WorkspaceManager", name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
+def const_compare_non_transactional(wsm: "shoji.Workspace", name: str, operator: str, const: Tuple[int, str, float]) -> np.ndarray:
 	"""
 	Compare a tensor to a constant value, and return all indices that match
 	"""
@@ -90,7 +90,7 @@ def const_compare_non_transactional(wsm: "shoji.WorkspaceManager", name: str, op
 	return np.array(result, dtype="int64")
 
 
-def get_filtered_indices(wsm: "shoji.WorkspaceManager", tensor: "shoji.Tensor", filters: List["shoji.Filter"], axis: int, n_rows: int) -> np.ndarray:
+def get_filtered_indices(wsm: "shoji.Workspace", tensor: "shoji.Tensor", filters: List["shoji.Filter"], axis: int, n_rows: int) -> np.ndarray:
 	indices = None
 	for f in filters:
 		if isinstance(tensor.dims[axis], str) and tensor.dims[axis] == f.dim:
@@ -102,7 +102,7 @@ def get_filtered_indices(wsm: "shoji.WorkspaceManager", tensor: "shoji.Tensor", 
 	return indices
 
 
-def read_filtered(wsm: "shoji.WorkspaceManager", name: str, filters: List["shoji.Filter"]) -> Union[np.ndarray, List[np.ndarray]]:
+def read_filtered(wsm: "shoji.Workspace", name: str, filters: List["shoji.Filter"]) -> Union[np.ndarray, List[np.ndarray]]:
 	tensor = wsm._get_tensor(name)
 	subspace = wsm._subdir
 	if tensor.jagged:
@@ -121,7 +121,7 @@ def read_filtered(wsm: "shoji.WorkspaceManager", name: str, filters: List["shoji
 
 
 @fdb.transactional
-def write_filtered(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, vals: Union[np.ndarray, List[np.ndarray]], filters: List["shoji.Filter"]) -> None:
+def write_filtered(tr: fdb.impl.Transaction, wsm: "shoji.Workspace", name: str, vals: Union[np.ndarray, List[np.ndarray]], filters: List["shoji.Filter"]) -> None:
 	tensor: shoji.Tensor = wsm._get_tensor(name)
 	subspace = wsm._subdir
 	assert isinstance(vals, (np.ndarray, list, tuple)), f"Value assigned to '{name}' is not a numpy array or a list or tuple of numpy arrays"

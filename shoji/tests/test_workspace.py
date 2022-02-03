@@ -11,7 +11,7 @@ def test_create_workspace():
 		del db.test2
 	db.test = shoji.Workspace()
 	with pytest.raises(ValueError):
-		db.test2 = shoji.WorkspaceManager(db, db._subdir, ("test2",))
+		db.test2 = shoji.Workspace(db, db._subdir, ("test2",))
 	del db.test
 	del db.test2
 

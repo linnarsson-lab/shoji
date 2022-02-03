@@ -116,62 +116,73 @@ import pickle
 from codecs import decode,encode
 from tqdm import trange
 
-	
+
 class Workspace:
 	"""
-	Class representing a new Workspace. Use this to create new workspaces in Shoji.
+	Class for managing workspaces.
 	"""
 	def __init__(self) -> None:
-		pass
+		self._db = None
+		self._subdir: fdb.directory_impl.DirectorySubspace = None
+		self._path: Union[Tuple, Tuple[str, ...]] = ()
+		self._name = ""
 
+	@classmethod
+	def _attach(db: fdb.impl.Database, subdir: fdb.directory_impl.DirectorySubspace, path: Union[Tuple, Tuple[str, ...]]) -> None:
+		ws = Workspace()
+		ws._db = db
+		ws._subdir = subdir
+		ws._path = path
+		ws._name = ""
 
-class WorkspaceManager:
-	"""
-	Class for managing workspaces. You should not create WorkspaceManager objects yourself.
-	"""
-	def __init__(self, db: fdb.impl.Database, subdir: fdb.directory_impl.DirectorySubspace, path: Union[Tuple, Tuple[str, ...]]) -> None:
-		self._db = db
-		self._subdir = subdir
-		self._path = path
-		self._name: str = ""
+	def move_(self, old_path: str, new_path: str) -> None:
+		assert isinstance(old_path, str), "Path must be string (use period to delimit path segments)"
+		assert isinstance(new_path, str), "Path must be string (use period to delimit path segments)"
+		assert self._db is not None, "Workspace was not attached to a database when attempting to move"
 
-	def _move_to(self, new_path: Union[str, Tuple[str, ...]]) -> None:
-		if isinstance(new_path, str):
-			new_path = tuple(new_path.split("."))
-		self._subdir = self._subdir.move_to(self._db.transaction, ("shoji",) + new_path)
-		self._path = new_path
+		assert new_path not in self._db, f"An entity named '{new_path}' already exists in the database"
+
+		segments = new_path.split(".")
+		if len(segments) > 1:
+			root = ".".join(segments[:-1])
+			assert root in self._db, "Path '{root}' does not exist"
+
+		self._subdir = self._subdir.move_to(self._db.transaction, ("shoji",) + tuple(new_path.split(".")))
+		self._path = tuple(new_path.split("."))
 		
-	def _create(self, path: Union[str, Tuple[str, ...]]) -> "WorkspaceManager":
-		if not isinstance(path, tuple):
-			path = (path,)
-		if self._subdir.exists(self._db.transaction, path):
-			raise IOError(f"Workspace '{'/'.join(path)}' already exists")
-		subdir = self._subdir.create(self._db.transaction, path)
-		return WorkspaceManager(self._db.transaction, subdir, self._path + path)
+	def create_(self, name: str) -> "Workspace":
+		assert isinstance(name, str), "Name must be string"
+		assert "." not in name, "Name must not contain period (.)"
+		assert self._db is not None, "Workspace must be attached to a database"
 
-	def _workspaces(self) -> List[str]:
+		assert name not in self, f"An entity named '{name}' already exists in the workspace"
+
+		subdir = self._subdir.create(self._db.transaction, (name,))
+		return Workspace(self._db.transaction, subdir, self._path + (name,))
+
+	def workspaces_(self) -> List[str]:
 		return self._subdir.list(self._db.transaction)
 
-	def _get_workspace(self, name: str) -> "WorkspaceManager":
+	def get_workspace_(self, name: str) -> "Workspace":
 		ws = self[name]
-		assert isinstance(ws, shoji.WorkspaceManager), f"'{name}' is not a workspace"
+		assert isinstance(ws, shoji.Workspace), f"'{name}' is not a workspace"
 		return ws
 
-	def _dimensions(self) -> List[str]:
+	def dimensions_(self) -> List[str]:
 		return [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
 
-	def _get_dimension(self, name: str) -> shoji.Dimension:
+	def get_dimension_(self, name: str) -> shoji.Dimension:
 		dim = self[name]
 		assert isinstance(dim, shoji.Dimension), f"'{name}' is not a dimension"
 		return dim
 
-	def _tensors(self, include_not_ready: bool = False) -> List[str]:
+	def tensors_(self, include_not_ready: bool = False) -> List[str]:
 		names = [self._subdir[Compartment.Tensors].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Tensors].range()]]
 		if include_not_ready:
 			return names
 		return [name for name in names if shoji.io.get_tensor(self._db.transaction, self, name) is not None]
 
-	def _get_tensor(self, name: str, include_initializing: bool = False) -> shoji.Tensor:
+	def get_tensor_(self, name: str, include_initializing: bool = False) -> shoji.Tensor:
 		tensor = shoji.io.get_tensor(self._db.transaction, self, name, include_initializing=include_initializing)
 		assert isinstance(tensor, shoji.Tensor), f"'{name}' is not a tensor"
 		return tensor
@@ -200,12 +211,12 @@ class WorkspaceManager:
 		if len(parts) == 1:
 			return True
 		else:
-			if isinstance(entity, shoji.WorkspaceManager):
+			if isinstance(entity, shoji.Workspace):
 				return entity.__contains__(".".join(parts[1:]))
 			else:
 				raise ValueError("First part of a multi-part name must be a workspace")
 
-	def __getattr__(self, name: str) -> Union["WorkspaceManager", shoji.Dimension, shoji.Tensor]:
+	def __getattr__(self, name: str) -> Union["Workspace", shoji.Dimension, shoji.Tensor]:
 		if name.startswith("_"):  # Jupyter calls this method with names like "__wrapped__" and we want to avoid a futile database roundtrip
 			return super().__getattribute__(name)
 		entity = shoji.io.get_entity(self._db.transaction, self, name)
@@ -219,12 +230,12 @@ class WorkspaceManager:
 		if len(parts) == 1:
 			return entity
 		else:
-			if isinstance(entity, shoji.WorkspaceManager):
+			if isinstance(entity, shoji.Workspace):
 				return entity.__getattr__(".".join(parts[1:]))
 			else:
 				raise ValueError("First part of a multi-part name must be a workspace")
 
-	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["WorkspaceManager", shoji.Dimension, "shoji.View", shoji.Tensor]:
+	def __getitem__(self, expr: Union[str, "shoji.Filter", slice]) -> Union["Workspace", shoji.Dimension, "shoji.View", shoji.Tensor]:
 		# Try to read an attribute on the object
 		if isinstance(expr, str):
 			return self.__getattr__(expr)
@@ -269,7 +280,7 @@ class WorkspaceManager:
 					raise AttributeError(f"Cannot create new tensor '{name}' because it would overwrite existing entity")
 			shoji.io.create_tensor(self._db.transaction, self, name, tensor)
 			shoji.io.initialize_tensor(self, name, tensor)
-		elif isinstance(value, shoji.WorkspaceManager):
+		elif isinstance(value, shoji.Workspace):
 			raise ValueError("Cannot assign WorkspaceManager object to workspace (did you mean to use Workspace object?")
 		else:
 			super().__setattr__(name, value)
@@ -423,7 +434,7 @@ class WorkspaceManager:
 			s += "</table>"
 		return s
 
-	def _import(self, f: str):
+	def restore_(self, f: str):
 		"""
 		Import a previously exported workspace
 
@@ -451,7 +462,7 @@ class WorkspaceManager:
 
 		h5.close()
 
-	def _export(self, f: str):
+	def backup_(self, f: str):
 		"""
 		Export the workspace to an HDF5 file
 
@@ -494,14 +505,3 @@ class WorkspaceManager:
 						except OSError as e:
 							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
 							raise e
-
-def create_workspace(db: "WorkspaceManager", path: str) -> "WorkspaceManager":
-	"""
-	Create a new workspace with the given path, unless it already exists
-
-	Args:
-		db:			The root workspace from which the path should begin
-		path:		The path, relative to the root
-	"""
-
-	return db._create(tuple(path.split(".")))

@@ -66,7 +66,7 @@ import numpy as np
 
 
 class View:
-	def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter, ...]) -> None:
+	def __init__(self, wsm: shoji.Workspace, filters: Tuple[shoji.Filter, ...]) -> None:
 		super().__setattr__("filters", {f.dim: f for f in filters})
 		super().__setattr__("wsm", wsm)
 

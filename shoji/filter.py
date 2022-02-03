@@ -202,10 +202,10 @@ class Filter:
 	def __invert__(self) -> "Filter":
 		return shoji.CompoundFilter("~", self, None)
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		pass
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		pass
 
 
@@ -224,10 +224,10 @@ class CompoundFilter(Filter):
 		else:
 			self.dim = right_operand.dim if right_operand is not None else None
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		return np.arange(self.left_operand.get_all_rows(wsm))
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		if self.operator == "&":
 			assert isinstance(self.left_operand, Filter)
 			assert isinstance(self.right_operand, Filter)
@@ -282,10 +282,10 @@ class TensorFilter(Filter):
 		if left_operand.shape[0] != right_operand.shape[0]:
 			raise SyntaxError(f"Tensor first dimensions mismatch")
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		return np.arange(self.left_operand.shape[0])  # TODO: maybe read this from db instead, to avoid stale state
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		if self.operator == ">":
 			# Do the range lookups on the tensor indexes
 			raise NotImplementedError("Tensor-tensor comparisons not yet supported")
@@ -311,10 +311,10 @@ class ConstFilter(Filter):
 		if type(right_operand) not in (str, int, float, bool):
 			raise SyntaxError(f"Only str, int, float and bool can be used as constants in filters")
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		return np.arange(self.left_operand.shape[0])
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		# TODO: this might cause concurrency problems when assigning to a filter expression
 		result = shoji.io.const_compare_non_transactional(wsm, self.left_operand.name, self.operator, self.right_operand)
 		return result
@@ -329,10 +329,10 @@ class DimensionSliceFilter(Filter):
 		self.dimension = dim
 		self.slice_ = slice_
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		return np.arange(self.dimension.length)
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		s = self.slice_.indices(self.dimension.length)
 		return np.arange(s[0], s[1], s[2])
 
@@ -347,10 +347,10 @@ class DimensionIndicesFilter(Filter):
 		self.dimension = dim
 		self.indices = indices
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		return np.arange(self.dimension.length)
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		self.indices[self.indices < 0] = self.indices[self.indices < 0] + self.dimension.length
 		if not np.all(self.indices < self.dimension.length):
 			raise IndexError("Index out of range")
@@ -366,10 +366,10 @@ class DimensionBoolFilter(Filter):
 		self.dimension = dim
 		self.selected = selected
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		return np.arange(self.dimension.length)
 
-	def get_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		if self.selected.shape[0] != self.dimension.length:
 			raise IndexError(f"Boolean array used for fancy indexing along '{self.dim}' has {self.selected.shape[0]} elements but dimension length is {self.dimension.length}")
 		return np.where(self.selected)[0]
@@ -385,10 +385,10 @@ class TensorSliceFilter(Filter):
 		self.slice_ = slice_
 		self.axis = axis
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		raise NotImplementedError()
 
-	def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace, n_rows: int = None) -> np.ndarray:
 		if n_rows is None:
 			n_rows = self.tensor.shape[self.axis]
 		s = self.slice_.indices(n_rows)
@@ -406,10 +406,10 @@ class TensorIndicesFilter(Filter):
 		self.tensor = tensor
 		self.indices = indices
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		raise NotImplementedError()
 
-	def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace, n_rows: int = None) -> np.ndarray:
 		if n_rows is None:
 			n_rows = self.tensor.shape[self.axis]
 		self.indices[self.indices < 0] = self.indices[self.indices < 0] + self.tensor.shape[self.axis]
@@ -428,10 +428,10 @@ class TensorBoolFilter(Filter):
 		self.tensor = tensor
 		self.selected = selected
 
-	def get_all_rows(self, wsm: shoji.WorkspaceManager) -> np.ndarray:
+	def get_all_rows(self, wsm: shoji.Workspace) -> np.ndarray:
 		raise NotImplementedError()
 
-	def get_rows(self, wsm: shoji.WorkspaceManager, n_rows: int = None) -> np.ndarray:
+	def get_rows(self, wsm: shoji.Workspace, n_rows: int = None) -> np.ndarray:
 		if n_rows is None:
 			n_rows = self.tensor.shape[self.axis]
 

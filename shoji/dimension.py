@@ -90,7 +90,7 @@ class Dimension:
 
 		self.length = length  # Actual length, will be set when dimension is read from db
 		self.name = ""  # Will be set if the Dimension is read from the db
-		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Dimension is read from the db
+		self.wsm: Optional[shoji.Workspace] = None  # Will be set if the Dimension is read from the db
 
 	# Support pickling
 	def __getstate__(self):
@@ -161,3 +161,25 @@ class Dimension:
 		names = list(vals.keys())
 		values = [shoji.TensorValue(x) for x in vals.values()]
 		shoji.io.append_values_multibatch(self.wsm, names, values, tuple(axes))
+
+	def extend(self, length: int) -> int:
+		"""
+		Extend the dimension by the indicated length
+
+		Args:
+
+			length: 	Number of elements to extend the dimension by
+		
+		Returns:
+
+			index:		The index to the newly extended part of the dimension
+		
+		Remarks:
+			This method extends the dimension transactionally, i.e. it is safe to call from multiple
+			threads and processes concurrently. However, the newly extended segment may not be
+			placed at the current end of the dimension (since another thread might be extending
+			concurrently). The caller should use the returned index to know where the extension
+			ended up.
+		"""
+		return self.ws.io.extend_dimension(self.name, length)
+

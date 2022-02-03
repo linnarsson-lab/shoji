@@ -303,7 +303,7 @@ class Tensor:
 		self.jagged = jagged
 
 		self.name = ""  # Will be set if the Tensor is read from the db
-		self.wsm: Optional[shoji.WorkspaceManager] = None  # Will be set if the Tensor is read from the db
+		self.wsm: Optional[shoji.Workspace] = None  # Will be set if the Tensor is read from the db
 
 		if inits is None:
 			self.inits: Optional[TensorValue] = None
