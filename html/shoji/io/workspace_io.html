@@ -157,7 +157,7 @@ def create_dimension(tr, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, dim: 
                         else:
                                 dim.length = prev_dim.length
         # Create or update the dimension
-        tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim)</code></pre>
+        tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim, protocol=4)</code></pre>
 </details>
 </section>
 <section>
@@ -201,7 +201,7 @@ def create_dimension(tr, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, dim: 
                         else:
                                 dim.length = prev_dim.length
         # Create or update the dimension
-        tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim)</code></pre>
+        tr[subdir[Compartment.Dimensions][name]] = pickle.dumps(dim, protocol=4)</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.workspace_io.delete_entity"><code class="name flex">

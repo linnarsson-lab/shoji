@@ -31,6 +31,7 @@ import numpy as np
 import fdb
 import shoji
 import pickle
+import logging
 from .enums import Compartment
 
 
@@ -72,7 +73,7 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34
                 tensor.shape = (0,) * tensor.rank
         if tensor.inits is not None:
                 tensor.initializing = True
-        tr[key] = pickle.dumps(tensor)
+        tr[key] = pickle.dumps(tensor, protocol=4)
                 
 
 def initialize_tensor(wsm: &#34;shoji.WorkspaceManager&#34;, name: str, tensor: shoji.Tensor):
@@ -98,7 +99,7 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceMan
         # Update the tensor definition to clear the initializing flag
         subdir = wsm._subdir
         key = subdir.pack((Compartment.Tensors, name))
-        tr[key] = pickle.dumps(tensor)
+        tr[key] = pickle.dumps(tensor, protocol=4)
 
         # Update the dimensions
         if tensor.rank &gt; 0:
@@ -121,7 +122,7 @@ def update_tensor(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34
         if shape is not None:
                 tensor.shape = shape
         key = subdir.pack((Compartment.Tensors, name))
-        tr[key] = pickle.dumps(tensor)
+        tr[key] = pickle.dumps(tensor, protocol=4)
 
 @fdb.transactional
 def write_at_indices(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34;, key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray) -&gt; int:
@@ -322,7 +323,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34
                                         raise ValueError(f&#34;Cannot append {vals.shape[i]} elements to tensor of length {tensor.shape[i]} along axis {i}, when another tensor will be {new_length} long along the same dimension&#34;)
                                 new_length = tensor.shape[i] + vals.shape[i]  # new_length will be the same for every tensor, since they start the same, and we checked above that the values are the same length
                         else:
-                                if tensor.shape[i] != 0 and tensor.shape[i] != vals.shape[i]:
+                                if tensor.shape[i] != 0 and tensor.shape[i] != vals.shape[i] and not tensor.jagged:
                                         raise ValueError(f&#34;Cannot append values of shape {vals.shape} to tensor of shape {tensor.shape} along axis {axis}&#34;)
 
         # Check that all relevant tensors will have the right length after appending
@@ -399,16 +400,18 @@ def append_values_multibatch(wsm: &#34;shoji.WorkspaceManager&#34;, tensors: Lis
                 while ensuring that the same number of (generalized) rows are appended to each tensor
                 in each transaction.
 
-                For each batch (transaction), the validity of appending values will be validated, to
+                For each batch (transaction), the validity of appending values will be re-validated, to
                 ensure safe concurrency
         &#34;&#34;&#34;
-        n = values[0].shape[axes[0]]  # Start by attempting to append everything
-        n_total = n
+        n_total = values[0].shape[axes[0]]
+        total_bytes = sum([val.size_in_bytes() for val in values])
+        n = int(max(1, 10_000_000 // (total_bytes // n_total)))
         total_bytes_written = 0
         n_bytes_written = 0
         ix = 0
         max_retries = 3
         while ix &lt; n_total:
+                # logging.info(f&#34;Appending values to {tensors} with {n} rows per batch and at {ix}&#34;)
                 try:
                         # Slice the values along the appending axis, without making copies (as np.take would do)
                         batches = []
@@ -514,7 +517,7 @@ def append_values(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34
                                         raise ValueError(f&#34;Cannot append {vals.shape[i]} elements to tensor of length {tensor.shape[i]} along axis {i}, when another tensor will be {new_length} long along the same dimension&#34;)
                                 new_length = tensor.shape[i] + vals.shape[i]  # new_length will be the same for every tensor, since they start the same, and we checked above that the values are the same length
                         else:
-                                if tensor.shape[i] != 0 and tensor.shape[i] != vals.shape[i]:
+                                if tensor.shape[i] != 0 and tensor.shape[i] != vals.shape[i] and not tensor.jagged:
                                         raise ValueError(f&#34;Cannot append values of shape {vals.shape} to tensor of shape {tensor.shape} along axis {axis}&#34;)
 
         # Check that all relevant tensors will have the right length after appending
@@ -596,7 +599,7 @@ tensor</p>
 <p>The batch size used when appending is adapted dynamically to maximize performance,
 while ensuring that the same number of (generalized) rows are appended to each tensor
 in each transaction.</p>
-<p>For each batch (transaction), the validity of appending values will be validated, to
+<p>For each batch (transaction), the validity of appending values will be re-validated, to
 ensure safe concurrency</p></div>
 <details class="source">
 <summary>
@@ -618,16 +621,18 @@ ensure safe concurrency</p></div>
                 while ensuring that the same number of (generalized) rows are appended to each tensor
                 in each transaction.
 
-                For each batch (transaction), the validity of appending values will be validated, to
+                For each batch (transaction), the validity of appending values will be re-validated, to
                 ensure safe concurrency
         &#34;&#34;&#34;
-        n = values[0].shape[axes[0]]  # Start by attempting to append everything
-        n_total = n
+        n_total = values[0].shape[axes[0]]
+        total_bytes = sum([val.size_in_bytes() for val in values])
+        n = int(max(1, 10_000_000 // (total_bytes // n_total)))
         total_bytes_written = 0
         n_bytes_written = 0
         ix = 0
         max_retries = 3
         while ix &lt; n_total:
+                # logging.info(f&#34;Appending values to {tensors} with {n} rows per batch and at {ix}&#34;)
                 try:
                         # Slice the values along the appending axis, without making copies (as np.take would do)
                         batches = []
@@ -696,7 +701,7 @@ def create_tensor(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34
                 tensor.shape = (0,) * tensor.rank
         if tensor.inits is not None:
                 tensor.initializing = True
-        tr[key] = pickle.dumps(tensor)</code></pre>
+        tr[key] = pickle.dumps(tensor, protocol=4)</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.tensor_io.dtype_class"><code class="name flex">
@@ -738,7 +743,7 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceMan
         # Update the tensor definition to clear the initializing flag
         subdir = wsm._subdir
         key = subdir.pack((Compartment.Tensors, name))
-        tr[key] = pickle.dumps(tensor)
+        tr[key] = pickle.dumps(tensor, protocol=4)
 
         # Update the dimensions
         if tensor.rank &gt; 0:
@@ -886,7 +891,7 @@ def update_tensor(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#34
         if shape is not None:
                 tensor.shape = shape
         key = subdir.pack((Compartment.Tensors, name))
-        tr[key] = pickle.dumps(tensor)</code></pre>
+        tr[key] = pickle.dumps(tensor, protocol=4)</code></pre>
 </details>
 </dd>
 <dt id="shoji.io.tensor_io.write_at_indices"><code class="name flex">

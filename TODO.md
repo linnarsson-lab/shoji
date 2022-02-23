@@ -46,3 +46,4 @@ No read/write concurrency
 Slow over network
 No parallelism even on a single computer
 Weird bugs in HDF5 cause problems
+Cannot reclaim space in existing file

@@ -210,8 +210,11 @@ import shoji
 import shoji.io
 from shoji.io import Compartment
 import h5py
+import pickle
+from codecs import decode,encode
+from tqdm import trange
 
-
+        
 class Workspace:
         &#34;&#34;&#34;
         Class representing a new Workspace. Use this to create new workspaces in Shoji.
@@ -230,13 +233,13 @@ class WorkspaceManager:
                 self._path = path
                 self._name: str = &#34;&#34;
 
-        def _move_to(self, new_path: Union[str, Tuple[str]]) -&gt; None:
-                if not isinstance(new_path, tuple):
-                        new_path = (new_path,)
+        def _move_to(self, new_path: Union[str, Tuple[str, ...]]) -&gt; None:
+                if isinstance(new_path, str):
+                        new_path = tuple(new_path.split(&#34;.&#34;))
                 self._subdir = self._subdir.move_to(self._db.transaction, (&#34;shoji&#34;,) + new_path)
                 self._path = new_path
                 
-        def _create(self, path: Union[str, Tuple[str]]) -&gt; &#34;WorkspaceManager&#34;:
+        def _create(self, path: Union[str, Tuple[str, ...]]) -&gt; &#34;WorkspaceManager&#34;:
                 if not isinstance(path, tuple):
                         path = (path,)
                 if self._subdir.exists(self._db.transaction, path):
@@ -319,7 +322,7 @@ class WorkspaceManager:
                         else:
                                 raise ValueError(&#34;First part of a multi-part name must be a workspace&#34;)
 
-        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, &#34;shoji.NonTransactionalView&#34;, shoji.Tensor]:
+        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, shoji.Tensor]:
                 # Try to read an attribute on the object
                 if isinstance(expr, str):
                         return self.__getattr__(expr)
@@ -378,16 +381,13 @@ class WorkspaceManager:
         def __delitem__(self, name: str) -&gt; None:
                 shoji.io.delete_entity(self._db.transaction, self, name)
 
-        def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None, *, fix_expression_dtype: bool = False) -&gt; None:
+        def _from_loom(self, f: str, verbose: bool = False) -&gt; None:
                 &#34;&#34;&#34;
                 Load a loom files into a workspace
 
                 Args:
                         f                                               Filename (full path)
-                        layers                                  Layers to load, or None to load all layers
                         verbose                                 If true, log progress
-                        dimension_names                 2-tuple of strings to use as dimension names for (rows, cols), or None to use (&#34;genes&#34;, &#34;cells&#34;)
-                        fix_expression_dtype    If true, fix a legacy mistake in some loom files where the main matrix is float32 but should be uint16
                 &#34;&#34;&#34;
 
                 def fix_name(name, suffix, other_names):
@@ -399,13 +399,10 @@ class WorkspaceManager:
                         name = name.replace(&#34;.&#34;, &#34;_&#34;)
                         return name
 
-                if dimension_names is None:
-                        dimension_names = (&#34;genes&#34;, &#34;cells&#34;)
+                dimension_names = (&#34;genes&#34;, &#34;cells&#34;)
                 genes_dim = dimension_names[0]
                 cells_dim = dimension_names[1]
                 with loompy.connect(f, validate=False) as ds:
-                        if layers is None:
-                                layers = list(ds.layers.keys())
                         self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
                         self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
@@ -442,14 +439,12 @@ class WorkspaceManager:
 
                         if verbose:
                                 logging.info(&#34;Loading layers&#34;)
-                        for key in layers:
-                                name = &#34;Expression&#34; if key == &#34;&#34; else key
-                                name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
-                                dtype = ds.layers[key].dtype.name
-                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
-                                if name == &#34;Expression&#34; and fix_expression_dtype:
-                                        dtype = &#34;uint16&#34;
-                                self[name] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=ds.layers[key][:, :].T.astype(dtype))
+                        u = ds.layers[&#34;unspliced&#34;][:, :].T.astype(&#34;uint16&#34;)
+                        s = ds.layers[&#34;spliced&#34;][:, :].T.astype(&#34;uint16&#34;)
+                        a = ds.layers[&#34;ambiguous&#34;][:, :].T.astype(&#34;uint16&#34;)
+                        self[&#34;Unspliced&#34;] = shoji.Tensor(&#34;uint16&#34;, (cells_dim, genes_dim), inits=u)
+                        self[&#34;Spliced&#34;] = shoji.Tensor(&#34;uint16&#34;, (cells_dim, genes_dim), inits=s)
+                        self[&#34;Expression&#34;] = shoji.Tensor(&#34;uint16&#34;, (cells_dim, genes_dim), inits=u + s + a)
                         
         def __repr__(self) -&gt; str:
                 subdirs = self._workspaces()
@@ -526,7 +521,90 @@ class WorkspaceManager:
                                 s += f&#34;&lt;td&gt;{t._quick_look()}&lt;/td&gt;&#34;
                                 s += &#34;&lt;/tr&gt;&#34;
                         s += &#34;&lt;/table&gt;&#34;
-                return s</code></pre>
+                return s
+
+        def _import(self, f: str):
+                &#34;&#34;&#34;
+                Import a previously exported workspace
+
+                Args:
+                        f               The file name (full path)
+                &#34;&#34;&#34;
+
+                h5 = h5py.File(f, &#34;r&#34;)
+                group = h5.require_group(&#34;shoji&#34;)
+                for att in group.attrs:
+                        if att.startswith(&#34;Dimension$&#34;):
+                                shape = group.attrs[att]
+                                if shape == -1:
+                                        shape = None
+                                self[att[10:]] = shoji.Dimension(shape=shape)
+
+                for tname in group:
+                        if tname.startswith(&#34;Tensor$&#34;):
+                                data = group[tname][:]
+                                tensor = pickle.loads(decode(group[tname], &#34;base64&#34;))
+                                if tensor.dtype == &#34;string&#34;:
+                                        data = data.astype(&#34;object&#34;)
+                                tname = tname[7:]
+                                self[tname] = shoji.Tensor(tensor.dtype, tensor.dims, chunks=tensor.chunks, jagged=tensor.jagged, inits=data)
+
+                h5.close()
+
+        def _export(self, f: str):
+                &#34;&#34;&#34;
+                Export the workspace to an HDF5 file
+
+                Args:
+                        f                       The file name (full path)
+
+                Remarks:
+                        If the file does not exist, it will be created
+                &#34;&#34;&#34;
+                if os.path.exists(f):
+                        os.remove(f)
+                with h5py.File(f, &#34;w&#34;) as h5:
+                        group = h5.require_group(&#34;shoji&#34;)
+
+                        for dname in self._dimensions():
+                                dim = self._get_dimension(dname)
+                                group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+                        for tname in self._tensors():
+                                tensor = self._get_tensor(tname)
+                                if tensor.jagged:
+                                        logging.warning(f&#34;Skipping &#39;{tname}&#39; because jagged tensors are not yet supported for export&#34;)
+                                        continue
+                                group.attrs[&#34;Tensor$&#34; + tname] = encode(pickle.dumps(tensor, protocol=4), &#34;base-64&#34;)
+                                
+                                dtype = tensor.dtype
+                                if tensor.dtype == &#34;string&#34;:
+                                        dtype = h5py.special_dtype(vlen=str)
+                                
+                                if tensor.rank == 0:
+                                        ds = group.create_dataset(tname, shape=tensor.shape, data=self[tname][:], dtype=dtype, compression=None)
+                                else:
+                                        ds = group.create_dataset(tname, shape=tensor.shape, dtype=dtype, compression=&#34;gzip&#34;)
+                                        BATCH_SIZE = tensor.chunks[0] * 100
+                                        for ix in trange(0, tensor.shape[0], BATCH_SIZE, desc=tname):
+                                                end = min(ix + BATCH_SIZE, tensor.shape[0])
+                                                data: np.ndarray = self[tname][ix:end]
+                                                try:
+                                                        ds[ix: end] = data
+                                                except OSError as e:
+                                                        print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
+                                                        raise e
+
+def create_workspace(db: &#34;WorkspaceManager&#34;, path: str) -&gt; &#34;WorkspaceManager&#34;:
+        &#34;&#34;&#34;
+        Create a new workspace with the given path, unless it already exists
+
+        Args:
+                db:                     The root workspace from which the path should begin
+                path:           The path, relative to the root
+        &#34;&#34;&#34;
+
+        return db._create(tuple(path.split(&#34;.&#34;)))</code></pre>
 </details>
 </section>
 <section>
@@ -534,6 +612,43 @@ class WorkspaceManager:
 <section>
 </section>
 <section>
+<h2 class="section-title" id="header-functions">Functions</h2>
+<dl>
+<dt id="shoji.workspace.create_workspace"><code class="name flex">
+<span>def <span class="ident">create_workspace</span></span>(<span>db: <a title="shoji.workspace.WorkspaceManager" href="#shoji.workspace.WorkspaceManager">WorkspaceManager</a>, path: str) ‑> <a title="shoji.workspace.WorkspaceManager" href="#shoji.workspace.WorkspaceManager">WorkspaceManager</a></span>
+</code></dt>
+<dd>
+<div class="desc"><p>Create a new workspace with the given path, unless it already exists</p>
+<h2 id="args">Args</h2>
+<dl>
+<dt><strong><code>db</code></strong></dt>
+<dd>
+<pre><code>            The root workspace from which the path should begin
+</code></pre>
+</dd>
+<dt><strong><code>path</code></strong></dt>
+<dd>
+<pre><code>  The path, relative to the root
+</code></pre>
+</dd>
+</dl></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def create_workspace(db: &#34;WorkspaceManager&#34;, path: str) -&gt; &#34;WorkspaceManager&#34;:
+        &#34;&#34;&#34;
+        Create a new workspace with the given path, unless it already exists
+
+        Args:
+                db:                     The root workspace from which the path should begin
+                path:           The path, relative to the root
+        &#34;&#34;&#34;
+
+        return db._create(tuple(path.split(&#34;.&#34;)))</code></pre>
+</details>
+</dd>
+</dl>
 </section>
 <section>
 <h2 class="section-title" id="header-classes">Classes</h2>
@@ -575,13 +690,13 @@ class WorkspaceManager:
                 self._path = path
                 self._name: str = &#34;&#34;
 
-        def _move_to(self, new_path: Union[str, Tuple[str]]) -&gt; None:
-                if not isinstance(new_path, tuple):
-                        new_path = (new_path,)
+        def _move_to(self, new_path: Union[str, Tuple[str, ...]]) -&gt; None:
+                if isinstance(new_path, str):
+                        new_path = tuple(new_path.split(&#34;.&#34;))
                 self._subdir = self._subdir.move_to(self._db.transaction, (&#34;shoji&#34;,) + new_path)
                 self._path = new_path
                 
-        def _create(self, path: Union[str, Tuple[str]]) -&gt; &#34;WorkspaceManager&#34;:
+        def _create(self, path: Union[str, Tuple[str, ...]]) -&gt; &#34;WorkspaceManager&#34;:
                 if not isinstance(path, tuple):
                         path = (path,)
                 if self._subdir.exists(self._db.transaction, path):
@@ -664,7 +779,7 @@ class WorkspaceManager:
                         else:
                                 raise ValueError(&#34;First part of a multi-part name must be a workspace&#34;)
 
-        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, &#34;shoji.NonTransactionalView&#34;, shoji.Tensor]:
+        def __getitem__(self, expr: Union[str, &#34;shoji.Filter&#34;, slice]) -&gt; Union[&#34;WorkspaceManager&#34;, shoji.Dimension, &#34;shoji.View&#34;, shoji.Tensor]:
                 # Try to read an attribute on the object
                 if isinstance(expr, str):
                         return self.__getattr__(expr)
@@ -723,16 +838,13 @@ class WorkspaceManager:
         def __delitem__(self, name: str) -&gt; None:
                 shoji.io.delete_entity(self._db.transaction, self, name)
 
-        def _from_loom(self, f: str, layers: List[str] = None, verbose: bool = False, dimension_names: Tuple[str, str] = None, *, fix_expression_dtype: bool = False) -&gt; None:
+        def _from_loom(self, f: str, verbose: bool = False) -&gt; None:
                 &#34;&#34;&#34;
                 Load a loom files into a workspace
 
                 Args:
                         f                                               Filename (full path)
-                        layers                                  Layers to load, or None to load all layers
                         verbose                                 If true, log progress
-                        dimension_names                 2-tuple of strings to use as dimension names for (rows, cols), or None to use (&#34;genes&#34;, &#34;cells&#34;)
-                        fix_expression_dtype    If true, fix a legacy mistake in some loom files where the main matrix is float32 but should be uint16
                 &#34;&#34;&#34;
 
                 def fix_name(name, suffix, other_names):
@@ -744,13 +856,10 @@ class WorkspaceManager:
                         name = name.replace(&#34;.&#34;, &#34;_&#34;)
                         return name
 
-                if dimension_names is None:
-                        dimension_names = (&#34;genes&#34;, &#34;cells&#34;)
+                dimension_names = (&#34;genes&#34;, &#34;cells&#34;)
                 genes_dim = dimension_names[0]
                 cells_dim = dimension_names[1]
                 with loompy.connect(f, validate=False) as ds:
-                        if layers is None:
-                                layers = list(ds.layers.keys())
                         self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
                         self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
@@ -787,14 +896,12 @@ class WorkspaceManager:
 
                         if verbose:
                                 logging.info(&#34;Loading layers&#34;)
-                        for key in layers:
-                                name = &#34;Expression&#34; if key == &#34;&#34; else key
-                                name = fix_name(name, &#34;layer&#34;, ds.ra.keys() + ds.ca.keys() + ds.attrs.keys())
-                                dtype = ds.layers[key].dtype.name
-                                dtype = &#34;string&#34; if dtype == &#34;object&#34; else dtype
-                                if name == &#34;Expression&#34; and fix_expression_dtype:
-                                        dtype = &#34;uint16&#34;
-                                self[name] = shoji.Tensor(dtype, (cells_dim, genes_dim), inits=ds.layers[key][:, :].T.astype(dtype))
+                        u = ds.layers[&#34;unspliced&#34;][:, :].T.astype(&#34;uint16&#34;)
+                        s = ds.layers[&#34;spliced&#34;][:, :].T.astype(&#34;uint16&#34;)
+                        a = ds.layers[&#34;ambiguous&#34;][:, :].T.astype(&#34;uint16&#34;)
+                        self[&#34;Unspliced&#34;] = shoji.Tensor(&#34;uint16&#34;, (cells_dim, genes_dim), inits=u)
+                        self[&#34;Spliced&#34;] = shoji.Tensor(&#34;uint16&#34;, (cells_dim, genes_dim), inits=s)
+                        self[&#34;Expression&#34;] = shoji.Tensor(&#34;uint16&#34;, (cells_dim, genes_dim), inits=u + s + a)
                         
         def __repr__(self) -&gt; str:
                 subdirs = self._workspaces()
@@ -871,7 +978,79 @@ class WorkspaceManager:
                                 s += f&#34;&lt;td&gt;{t._quick_look()}&lt;/td&gt;&#34;
                                 s += &#34;&lt;/tr&gt;&#34;
                         s += &#34;&lt;/table&gt;&#34;
-                return s</code></pre>
+                return s
+
+        def _import(self, f: str):
+                &#34;&#34;&#34;
+                Import a previously exported workspace
+
+                Args:
+                        f               The file name (full path)
+                &#34;&#34;&#34;
+
+                h5 = h5py.File(f, &#34;r&#34;)
+                group = h5.require_group(&#34;shoji&#34;)
+                for att in group.attrs:
+                        if att.startswith(&#34;Dimension$&#34;):
+                                shape = group.attrs[att]
+                                if shape == -1:
+                                        shape = None
+                                self[att[10:]] = shoji.Dimension(shape=shape)
+
+                for tname in group:
+                        if tname.startswith(&#34;Tensor$&#34;):
+                                data = group[tname][:]
+                                tensor = pickle.loads(decode(group[tname], &#34;base64&#34;))
+                                if tensor.dtype == &#34;string&#34;:
+                                        data = data.astype(&#34;object&#34;)
+                                tname = tname[7:]
+                                self[tname] = shoji.Tensor(tensor.dtype, tensor.dims, chunks=tensor.chunks, jagged=tensor.jagged, inits=data)
+
+                h5.close()
+
+        def _export(self, f: str):
+                &#34;&#34;&#34;
+                Export the workspace to an HDF5 file
+
+                Args:
+                        f                       The file name (full path)
+
+                Remarks:
+                        If the file does not exist, it will be created
+                &#34;&#34;&#34;
+                if os.path.exists(f):
+                        os.remove(f)
+                with h5py.File(f, &#34;w&#34;) as h5:
+                        group = h5.require_group(&#34;shoji&#34;)
+
+                        for dname in self._dimensions():
+                                dim = self._get_dimension(dname)
+                                group.attrs[&#34;Dimension$&#34; + dname] = (dim.shape if dim.shape is not None else -1, dim.length)
+
+                        for tname in self._tensors():
+                                tensor = self._get_tensor(tname)
+                                if tensor.jagged:
+                                        logging.warning(f&#34;Skipping &#39;{tname}&#39; because jagged tensors are not yet supported for export&#34;)
+                                        continue
+                                group.attrs[&#34;Tensor$&#34; + tname] = encode(pickle.dumps(tensor, protocol=4), &#34;base-64&#34;)
+                                
+                                dtype = tensor.dtype
+                                if tensor.dtype == &#34;string&#34;:
+                                        dtype = h5py.special_dtype(vlen=str)
+                                
+                                if tensor.rank == 0:
+                                        ds = group.create_dataset(tname, shape=tensor.shape, data=self[tname][:], dtype=dtype, compression=None)
+                                else:
+                                        ds = group.create_dataset(tname, shape=tensor.shape, dtype=dtype, compression=&#34;gzip&#34;)
+                                        BATCH_SIZE = tensor.chunks[0] * 100
+                                        for ix in trange(0, tensor.shape[0], BATCH_SIZE, desc=tname):
+                                                end = min(ix + BATCH_SIZE, tensor.shape[0])
+                                                data: np.ndarray = self[tname][ix:end]
+                                                try:
+                                                        ds[ix: end] = data
+                                                except OSError as e:
+                                                        print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
+                                                        raise e</code></pre>
 </details>
 </dd>
 </dl>
@@ -890,6 +1069,11 @@ class WorkspaceManager:
 <li><h3>Super-module</h3>
 <ul>
 <li><code><a title="shoji" href="index.html">shoji</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-functions">Functions</a></h3>
+<ul class="">
+<li><code><a title="shoji.workspace.create_workspace" href="#shoji.workspace.create_workspace">create_workspace</a></code></li>
 </ul>
 </li>
 <li><h3><a href="#header-classes">Classes</a></h3>

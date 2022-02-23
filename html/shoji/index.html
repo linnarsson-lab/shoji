@@ -57,7 +57,7 @@ image data can be represented as high-rank tensors with dimensions
 such as <code>x</code>, <code>y</code>, <code>channel</code>, and <code>timepoint</code>. This makes Shoji fundamentally
 different from tabular (relational) databases, which struggle to represent multidimensional data.</p>
 <p>The fundamental operations in shoji are: <em>creating a tensor</em>, <em>appending values</em>, <em>reading values</em>,
-<em>updating values</em>. Tensors can be deleted, but individual tensor values cannot.</p>
+<em>updating values</em>. Tensors can be deleted, but individual tensor rows cannot.</p>
 <h3 id="acid-guarantees">ACID guarantees</h3>
 <p>Shoji treats the <em>slice</em> as the atomic unit when writing data. This means that if your program crashes in the
 middle of an operation, you are guaranteed that there will be no half-created rows, or partially
@@ -96,9 +96,7 @@ to ensure consistency.</p>
 <pre><code class="shell">$ git clone https://github.com/linnarsson-lab/shoji.git
 $ pip install -e shoji
 </code></pre>
-<p>Next, install <a href="https://apple.github.io/foundationdb/getting-started-mac.html">FoundationDB</a> (or ask your
-database adminstrator for a <a href="https://apple.github.io/foundationdb/administration.html#foundationdb-cluster-file">cluster file</a>).</p>
-<p>Finally, using Python, check that you can now connect to the database:</p>
+<p>Check that you can now connect to the database:</p>
 <pre><code class="python">import shoji
 db = shoji.connect()
 db
@@ -190,7 +188,7 @@ such as `x`, `y`, `channel`, and `timepoint`. This makes Shoji fundamentally
 different from tabular (relational) databases, which struggle to represent multidimensional data.
 
 The fundamental operations in shoji are: *creating a tensor*, *appending values*, *reading values*, 
-*updating values*. Tensors can be deleted, but individual tensor values cannot.
+*updating values*. Tensors can be deleted, but individual tensor rows cannot.
 
 ### ACID guarantees
 
@@ -239,10 +237,7 @@ $ git clone https://github.com/linnarsson-lab/shoji.git
 $ pip install -e shoji
 ```
 
-Next, install [FoundationDB](https://apple.github.io/foundationdb/getting-started-mac.html) (or ask your 
-database adminstrator for a [cluster file](https://apple.github.io/foundationdb/administration.html#foundationdb-cluster-file)).
-
-Finally, using Python, check that you can now connect to the database:
+Check that you can now connect to the database:
 
 ```python
 import shoji
@@ -315,15 +310,18 @@ Perform complex database operations atomically.
 
 &#34;&#34;&#34;
 import fdb
-fdb.api_version(620)
+try:
+    fdb.api_version(630)
+except RuntimeError:
+    fdb.api_version(620)
 
 from .dimension import Dimension
 from .tensor import Tensor, TensorValue
-from .workspace import Workspace, WorkspaceManager
+from .workspace import Workspace, WorkspaceManager, create_workspace
 from .connect import connect
 from .filter import Filter, CompoundFilter, TensorFilter, ConstFilter, DimensionBoolFilter, DimensionIndicesFilter, DimensionSliceFilter, TensorBoolFilter, TensorIndicesFilter, TensorSliceFilter
 from .transaction import Transaction
-from .groupby import GroupViewBy, GroupDimensionBy
+from .groupby import GroupViewBy, GroupDimensionBy, Accumulator
 from .view import View</code></pre>
 </details>
 </section>

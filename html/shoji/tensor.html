@@ -333,10 +333,15 @@ ws.Image = shoji.Tensor(&#34;uint16&#34;, (&#34;cells&#34;, &#34;channels&#34;, 
 In this examples, `Image` is a 5-dimensional tensor, where the last two dimensions 
 have variable length.
 &#34;&#34;&#34;
-from typing import Tuple, Union, List, Optional, Callable, Literal
+from typing import Tuple, Union, List, Optional, Callable
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import numpy as np
 import shoji
 import sys
+import logging
 
 
 FancyIndexElement = Union[&#34;shoji.Filter&#34;, slice, int, np.ndarray]
@@ -406,13 +411,13 @@ class TensorValue:
                 n_bytes = 0
                 if not self.jagged:
                         if self.dtype == &#34;string&#34;:
-                                n_bytes += sum([len(s) for s in self.values]) * 2
+                                n_bytes += sum([len(s) + 1 for s in self.values]) * 2
                         else:
                                 n_bytes += self.values.size * self.values.itemsize  # type: ignore
                 else:
                         for row in self.values:
                                 if self.dtype == &#34;string&#34;:
-                                        n_bytes += sum([len(s) for s in row]) * 2
+                                        n_bytes += sum([len(s) + 1 for s in row]) * 2
                                 else:
                                         n_bytes += row.size * row.itemsize
                 return n_bytes
@@ -498,10 +503,11 @@ class Tensor:
                         if self.rank == 0:
                                 self.chunks = ()
                         elif self.rank == 1:
-                                self.chunks = (1000 // byte_size,)
+                                self.chunks = (500 // byte_size,)
                         else:
-                                max_size = (dim if isinstance(dim, int) else sys.maxsize for dim in self.dims)
-                                self.chunks = tuple(min(a,b) for a,b in zip(max_size, (600 // byte_size, 100)))
+                                desired_sizes = (300 // byte_size, 100) + (1,) * (self.rank - 2)
+                                max_sizes = (dim if isinstance(dim, int) else sys.maxsize for dim in self.dims)
+                                self.chunks = tuple(min(a,b) for a,b in zip(max_sizes, desired_sizes))
                 else:
                         if len(chunks) != self.rank:
                                 raise ValueError(f&#34;chunks={chunks} is wrong number of dimensions for rank-{self.rank} tensor&#34; + (&#34; (use () for rank-0 tensor)&#34; if self.rank == 0 else &#34;&#34;))
@@ -800,10 +806,11 @@ along those dimensions.</p>
                         if self.rank == 0:
                                 self.chunks = ()
                         elif self.rank == 1:
-                                self.chunks = (1000 // byte_size,)
+                                self.chunks = (500 // byte_size,)
                         else:
-                                max_size = (dim if isinstance(dim, int) else sys.maxsize for dim in self.dims)
-                                self.chunks = tuple(min(a,b) for a,b in zip(max_size, (600 // byte_size, 100)))
+                                desired_sizes = (300 // byte_size, 100) + (1,) * (self.rank - 2)
+                                max_sizes = (dim if isinstance(dim, int) else sys.maxsize for dim in self.dims)
+                                self.chunks = tuple(min(a,b) for a,b in zip(max_sizes, desired_sizes))
                 else:
                         if len(chunks) != self.rank:
                                 raise ValueError(f&#34;chunks={chunks} is wrong number of dimensions for rank-{self.rank} tensor&#34; + (&#34; (use () for rank-0 tensor)&#34; if self.rank == 0 else &#34;&#34;))
@@ -1150,13 +1157,13 @@ def rank(self) -&gt; int:
                 n_bytes = 0
                 if not self.jagged:
                         if self.dtype == &#34;string&#34;:
-                                n_bytes += sum([len(s) for s in self.values]) * 2
+                                n_bytes += sum([len(s) + 1 for s in self.values]) * 2
                         else:
                                 n_bytes += self.values.size * self.values.itemsize  # type: ignore
                 else:
                         for row in self.values:
                                 if self.dtype == &#34;string&#34;:
-                                        n_bytes += sum([len(s) for s in row]) * 2
+                                        n_bytes += sum([len(s) + 1 for s in row]) * 2
                                 else:
                                         n_bytes += row.size * row.itemsize
                 return n_bytes</code></pre>
@@ -1191,13 +1198,13 @@ def size(self) -&gt; int:
         n_bytes = 0
         if not self.jagged:
                 if self.dtype == &#34;string&#34;:
-                        n_bytes += sum([len(s) for s in self.values]) * 2
+                        n_bytes += sum([len(s) + 1 for s in self.values]) * 2
                 else:
                         n_bytes += self.values.size * self.values.itemsize  # type: ignore
         else:
                 for row in self.values:
                         if self.dtype == &#34;string&#34;:
-                                n_bytes += sum([len(s) for s in row]) * 2
+                                n_bytes += sum([len(s) + 1 for s in row]) * 2
                         else:
                                 n_bytes += row.size * row.itemsize
         return n_bytes</code></pre>

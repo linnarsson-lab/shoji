@@ -343,8 +343,10 @@ class WorkspaceManager:
 				logging.info("Loading layers")
 			u = ds.layers["unspliced"][:, :].T.astype("uint16")
 			s = ds.layers["spliced"][:, :].T.astype("uint16")
+			a = ds.layers["ambiguous"][:, :].T.astype("uint16")
 			self["Unspliced"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u)
-			self["Expression"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u + s)
+			self["Spliced"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=s)
+			self["Expression"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u + s + a)
 			
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()

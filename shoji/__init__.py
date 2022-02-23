@@ -41,7 +41,7 @@ such as `x`, `y`, `channel`, and `timepoint`. This makes Shoji fundamentally
 different from tabular (relational) databases, which struggle to represent multidimensional data.
 
 The fundamental operations in shoji are: *creating a tensor*, *appending values*, *reading values*, 
-*updating values*. Tensors can be deleted, but individual tensor values cannot.
+*updating values*. Tensors can be deleted, but individual tensor rows cannot.
 
 ### ACID guarantees
 
@@ -90,10 +90,7 @@ $ git clone https://github.com/linnarsson-lab/shoji.git
 $ pip install -e shoji
 ```
 
-Next, install [FoundationDB](https://apple.github.io/foundationdb/getting-started-mac.html) (or ask your 
-database adminstrator for a [cluster file](https://apple.github.io/foundationdb/administration.html#foundationdb-cluster-file)).
-
-Finally, using Python, check that you can now connect to the database:
+Check that you can now connect to the database:
 
 ```python
 import shoji

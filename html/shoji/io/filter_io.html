@@ -66,6 +66,58 @@ def const_compare(tr, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, operator
         return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
 
 
+def const_compare_non_transactional(wsm: &#34;shoji.WorkspaceManager&#34;, name: str, operator: str, const: Tuple[int, str, float]) -&gt; np.ndarray:
+        &#34;&#34;&#34;
+        Compare a tensor to a constant value, and return all indices that match
+        &#34;&#34;&#34;
+        # Code for range, equality and inequality filters
+        tensor = wsm._get_tensor(name)
+        const = tensor.python_dtype()(const)  # Cast the const to string, float or int
+        index = wsm._subdir[Compartment.TensorIndex][name]
+        eq_range = index[const].range()
+        all_range = index.range()
+        start, stop = all_range.start, all_range.stop
+        tr = wsm._db.transaction  # This will typically (except inside a Transaction scope) be set to the database, so that each time it&#39;s used it will create a separeate transaction
+        if operator == &#34;!=&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+                a = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+                stop = all_range.stop
+                b = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                return np.concatenate([a, b])
+        if operator == &#34;==&#34;:
+                start, stop = eq_range.start, eq_range.stop
+        elif operator == &#34;&gt;=&#34;:
+                start = eq_range.start
+        elif operator == &#34;&gt;&#34;:
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+        elif operator == &#34;&lt;=&#34;:
+                stop = eq_range.stop
+        elif operator == &#34;&lt;&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+
+        tr = wsm._db.create_transaction()
+        n = 100_000
+        result = []
+        next_start = b&#39;&#39;
+        while start &lt; stop:
+                try:
+                        temp = []
+                        for k, _ in tr.get_range(start, stop, limit=n):
+                                temp.append(index.unpack(k)[1])
+                        next_start = tr.get_key(fdb.KeySelector.first_greater_than(k)).value
+                        result += temp
+                except fdb.impl.FDBError as e:
+                        if e.code in (1004, 1007, 1031, 2101) and n &gt; 1:  # Too many bytes or too long time, so try again with less
+                                n = max(1, n // 2)
+                                tr = wsm._db.create_transaction()
+                                continue
+                        else:
+                                raise e
+                start = next_start
+        return np.array(result, dtype=&#34;int64&#34;)
+
+
 def get_filtered_indices(wsm: &#34;shoji.WorkspaceManager&#34;, tensor: &#34;shoji.Tensor&#34;, filters: List[&#34;shoji.Filter&#34;], axis: int, n_rows: int) -&gt; np.ndarray:
         indices = None
         for f in filters:
@@ -163,6 +215,67 @@ def const_compare(tr, wsm: &#34;shoji.WorkspaceManager&#34;, name: str, operator
         return np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)</code></pre>
 </details>
 </dd>
+<dt id="shoji.io.filter_io.const_compare_non_transactional"><code class="name flex">
+<span>def <span class="ident">const_compare_non_transactional</span></span>(<span>wsm: shoji.WorkspaceManager, name: str, operator: str, const: Tuple[int, str, float]) ‑> numpy.ndarray</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Compare a tensor to a constant value, and return all indices that match</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def const_compare_non_transactional(wsm: &#34;shoji.WorkspaceManager&#34;, name: str, operator: str, const: Tuple[int, str, float]) -&gt; np.ndarray:
+        &#34;&#34;&#34;
+        Compare a tensor to a constant value, and return all indices that match
+        &#34;&#34;&#34;
+        # Code for range, equality and inequality filters
+        tensor = wsm._get_tensor(name)
+        const = tensor.python_dtype()(const)  # Cast the const to string, float or int
+        index = wsm._subdir[Compartment.TensorIndex][name]
+        eq_range = index[const].range()
+        all_range = index.range()
+        start, stop = all_range.start, all_range.stop
+        tr = wsm._db.transaction  # This will typically (except inside a Transaction scope) be set to the database, so that each time it&#39;s used it will create a separeate transaction
+        if operator == &#34;!=&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+                a = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+                stop = all_range.stop
+                b = np.array([index.unpack(k)[1] for k, _ in tr[start:stop]], dtype=&#34;int64&#34;)
+                return np.concatenate([a, b])
+        if operator == &#34;==&#34;:
+                start, stop = eq_range.start, eq_range.stop
+        elif operator == &#34;&gt;=&#34;:
+                start = eq_range.start
+        elif operator == &#34;&gt;&#34;:
+                start = tr.get_key(fdb.KeySelector.first_greater_than(eq_range.stop))
+        elif operator == &#34;&lt;=&#34;:
+                stop = eq_range.stop
+        elif operator == &#34;&lt;&#34;:
+                stop = tr.get_key(fdb.KeySelector.last_less_than(eq_range.start))
+
+        tr = wsm._db.create_transaction()
+        n = 100_000
+        result = []
+        next_start = b&#39;&#39;
+        while start &lt; stop:
+                try:
+                        temp = []
+                        for k, _ in tr.get_range(start, stop, limit=n):
+                                temp.append(index.unpack(k)[1])
+                        next_start = tr.get_key(fdb.KeySelector.first_greater_than(k)).value
+                        result += temp
+                except fdb.impl.FDBError as e:
+                        if e.code in (1004, 1007, 1031, 2101) and n &gt; 1:  # Too many bytes or too long time, so try again with less
+                                n = max(1, n // 2)
+                                tr = wsm._db.create_transaction()
+                                continue
+                        else:
+                                raise e
+                start = next_start
+        return np.array(result, dtype=&#34;int64&#34;)</code></pre>
+</details>
+</dd>
 <dt id="shoji.io.filter_io.get_filtered_indices"><code class="name flex">
 <span>def <span class="ident">get_filtered_indices</span></span>(<span>wsm: shoji.WorkspaceManager, tensor: shoji.Tensor, filters: List[ForwardRef('shoji.Filter')], axis: int, n_rows: int) ‑> numpy.ndarray</span>
 </code></dt>
@@ -258,6 +371,7 @@ def write_filtered(tr: fdb.impl.Transaction, wsm: &#34;shoji.WorkspaceManager&#3
 <li><h3><a href="#header-functions">Functions</a></h3>
 <ul class="">
 <li><code><a title="shoji.io.filter_io.const_compare" href="#shoji.io.filter_io.const_compare">const_compare</a></code></li>
+<li><code><a title="shoji.io.filter_io.const_compare_non_transactional" href="#shoji.io.filter_io.const_compare_non_transactional">const_compare_non_transactional</a></code></li>
 <li><code><a title="shoji.io.filter_io.get_filtered_indices" href="#shoji.io.filter_io.get_filtered_indices">get_filtered_indices</a></code></li>
 <li><code><a title="shoji.io.filter_io.read_filtered" href="#shoji.io.filter_io.read_filtered">read_filtered</a></code></li>
 <li><code><a title="shoji.io.filter_io.write_filtered" href="#shoji.io.filter_io.write_filtered">write_filtered</a></code></li>
