@@ -345,6 +345,7 @@ class WorkspaceManager:
 			s = ds.layers["spliced"][:, :].T.astype("uint16")
 			a = ds.layers["ambiguous"][:, :].T.astype("uint16")
 			self["Unspliced"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u)
+			self["Ambiguous"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=a)
 			self["Spliced"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=s)
 			self["Expression"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u + s + a)
 			
