@@ -332,13 +332,15 @@ class WorkspaceManager:
 
 			if verbose:
 				logging.info("Loading column attributes")
-			for key, vals in ds.ca.items():
-				dtype = ds.ca[key].dtype.name
-				dtype = "string" if dtype == "object" else dtype
-				name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
-				dims = (cells_dim,) + vals.shape[1:]
-				self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
-
+				for key, vals in ds.ca.items():
+					try:
+						dtype = ds.ca[key].dtype.name
+					except AttributeError as e:
+						logging.error(f"Skipping column attribute '{key}' because {e}")
+					dtype = "string" if dtype == "object" else dtype
+					name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+					dims = (cells_dim,) + vals.shape[1:]
+					self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
 			if verbose:
 				logging.info("Loading layers")
 			u = ds.layers["unspliced"][:, :].T.astype("uint16")
