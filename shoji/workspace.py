@@ -336,7 +336,8 @@ class WorkspaceManager:
 				try:
 					dtype = ds.ca[key].dtype.name
 				except AttributeError as e:
-					logging.error(f"Skipping column attribute '{key}' because {e}")
+					print(f"Skipping column attribute '{key}' of '{f}' because {e}")
+					continue
 				dtype = "string" if dtype == "object" else dtype
 				name = fix_name(key, cells_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
 				dims = (cells_dim,) + vals.shape[1:]
