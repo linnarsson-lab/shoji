@@ -488,21 +488,35 @@ class Tensor:
 		tv = TensorValue(vals)
 		shoji.io.append_values_multibatch(self.wsm, [self.name], [tv], (axis,))
 
-	def sparse(self) -> sparse.coo_matrix:
+	def sparse(self, rows: np.ndarray = None, cols: np.ndarray = None) -> sparse.coo_matrix:
 		assert self.rank == 2, "sparse() only works with rank-2 tensors"
+		if rows is None:
+			rows = np.arange(self.shape[0])
+		if cols is None:
+			cols = np.arange(self.shape[1])
+		if np.issubdtype(rows.dtype, np.bool_):
+			rows = np.where(rows)[0]
+		if np.issubdtype(cols.dtype, np.bool_):
+			cols = np.where(cols)[0]
+
+		n_rows = rows.shape[0]
+		n_cols = cols.shape[0]
 
 		data: List[np.ndarray] = []
 		row: List[np.ndarray] = []
 		col: List[np.ndarray] = []
 
+		i = 0
 		BATCH_SIZE = self.chunks[0]
 		for ix in range(0, self.shape[0], BATCH_SIZE):
-			vals = self[ix:ix + BATCH_SIZE, :]
+			selected_rows = (rows >= ix) & (rows < ix + BATCH_SIZE)
+			vals = self[ix:ix + BATCH_SIZE, cols][rows[selected_rows] - ix, :]
 			nonzeros = np.where(vals != 0)
 			data.append(vals[nonzeros])
-			row.append(nonzeros[0] + ix)
+			row.append(nonzeros[0] + i)
 			col.append(nonzeros[1])
-		return sparse.coo_matrix((np.concatenate(data), (np.concatenate(row), np.concatenate(col))), shape=self.shape)
+			i += selected_rows.sum()
+		return sparse.coo_matrix((np.concatenate(data), (np.concatenate(row), np.concatenate(col))), shape=(n_rows, n_cols))
 
 	def _quick_look(self) -> str:
 		if self.rank == 0:
