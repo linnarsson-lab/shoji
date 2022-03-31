@@ -178,6 +178,7 @@ In this examples, `Image` is a 5-dimensional tensor, where the last two dimensio
 have variable length.
 """
 from typing import Tuple, Union, List, Optional, Callable
+import scipy.sparse as sparse
 try:
     from typing import Literal
 except ImportError:
@@ -486,6 +487,22 @@ class Tensor:
 
 		tv = TensorValue(vals)
 		shoji.io.append_values_multibatch(self.wsm, [self.name], [tv], (axis,))
+
+	def sparse(self) -> sparse.coo_matrix:
+		assert self.rank == 2, "sparse() only works with rank-2 tensors"
+
+		data: List[np.ndarray] = []
+		row: List[np.ndarray] = []
+		col: List[np.ndarray] = []
+
+		BATCH_SIZE = self.chunks[0]
+		for ix in range(0, self.shape[0], BATCH_SIZE):
+			vals = self[ix:ix + BATCH_SIZE, :]
+			nonzeros = np.where(vals != 0)
+			data.append(vals[nonzeros])
+			row.append(nonzeros[0] + ix)
+			col.append(nonzeros[1])
+		return sparse.coo_matrix((np.concatenate(data), (np.concatenate(row), np.concatenate(col))), shape=self.shape)
 
 	def _quick_look(self) -> str:
 		if self.rank == 0:
