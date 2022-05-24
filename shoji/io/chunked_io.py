@@ -4,8 +4,6 @@ import fdb
 import blosc
 from numpy.ma.core import MaskedArray
 import time
-from multiprocessing import Pool, cpu_count
-from itertools import chain
 
 
 """
