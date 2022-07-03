@@ -509,10 +509,13 @@ class WorkspaceManager:
 		if(only_selected):
 			ind = np.where(self._get_tensor('SelectedFeatures')[:]==True)[0]
 		else:
- 			ind =np.ones(n_genes)
-		df = pd.DataFrame(data = self._get_tensor('Expression')[:,ind],index = self._get_tensor('CellID')[:],columns=self._get_tensor('Accession')[ind] )
+			ind =np.ones(n_genes)
+		
+		df = pd.DataFrame(data = self._get_tensor('Expression')[:,ind],dtype = 'int64' ,index = self._get_tensor('CellID')[:],columns=self._get_tensor('Accession')[ind] )
 		adata =sc.AnnData(df)
 		for tname in self._tensors():
+			if(tname in ['Expression','CellID','Accession']):
+				continue
 			tensor = self._get_tensor(tname)
 			if(tensor.shape==(n_cells,)):
 				adata.obs[tname] = tensor[:]
