@@ -359,22 +359,22 @@ class WorkspaceManager:
 			with loompy.connect(fagg, mode="r", validate=False) as ds:
 				self[clusters_dim] = shoji.Dimension(shape=ds.shape[1])
 
-			if verbose:
-				logging.info("Loading column attributes from .agg")
-			for key, vals in ds.ca.items():
-				try:
-					dtype = ds.ca[key].dtype.name
-				except AttributeError as e:
-					print(f"Skipping column attribute '{key}' of '{f}' because {e}")
-					continue
-				dtype = "string" if dtype == "object" else dtype
-				name = fix_name(key, clusters_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
-				dims = (clusters_dim,) + vals.shape[1:]
-				self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
-			if verbose:
-				logging.info("Loading .agg layers")
-			x = ds.layers[""][:, :].T.astype("float32")
-			self["MeanExpression"] = shoji.Tensor("uint16", (clusters_dim, genes_dim), inits=x)
+				if verbose:
+					logging.info("Loading column attributes from .agg")
+				for key, vals in ds.ca.items():
+					try:
+						dtype = ds.ca[key].dtype.name
+					except AttributeError as e:
+						print(f"Skipping column attribute '{key}' of '{f}' because {e}")
+						continue
+					dtype = "string" if dtype == "object" else dtype
+					name = fix_name(key, clusters_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+					dims = (clusters_dim,) + vals.shape[1:]
+					self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
+				if verbose:
+					logging.info("Loading .agg layers")
+				x = ds.layers[""][:, :].T.astype("float32")
+				self["MeanExpression"] = shoji.Tensor("uint16", (clusters_dim, genes_dim), inits=x)
 
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
