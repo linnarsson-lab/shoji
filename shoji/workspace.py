@@ -307,7 +307,7 @@ class WorkspaceManager:
 		genes_dim = dimension_names[0]
 		cells_dim = dimension_names[1]
 		clusters_dim = dimension_names[2]
-		with loompy.connect(f, validate=False) as ds:
+		with loompy.connect(f, mode="r", validate=False) as ds:
 			self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
 			self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
@@ -356,7 +356,7 @@ class WorkspaceManager:
 			self["Expression"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u + s + a)
 
 		if fagg is not None:
-			with loompy.connect(fagg, validate=False) as ds:
+			with loompy.connect(fagg, mode="r", validate=False) as ds:
 				self[clusters_dim] = shoji.Dimension(shape=ds.shape[1])
 
 			if verbose:
