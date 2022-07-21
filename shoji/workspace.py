@@ -374,7 +374,7 @@ class WorkspaceManager:
 				if verbose:
 					logging.info("Loading .agg layers")
 				x = ds.layers[""][:, :].T.astype("float32")
-				self["MeanExpression"] = shoji.Tensor("uint16", (clusters_dim, genes_dim), inits=x)
+				self["MeanExpression"] = shoji.Tensor("float32", (clusters_dim, genes_dim), inits=x)
 
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
