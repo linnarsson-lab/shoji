@@ -283,13 +283,14 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
-	def _from_loom(self, f: str, verbose: bool = False) -> None:
+	def _from_loom(self, f: str, fagg: str = None, verbose: bool = False) -> None:
 		"""
-		Load a loom files into a workspace
+		Load a loom file into a workspace
 
 		Args:
-			f						Filename (full path)
-			verbose					If true, log progress
+			f				Filename (full path)
+			fagg			Optional .agg file to import on the clusters dimension
+			verbose			If true, log progress
 		"""
 
 		def fix_name(name, suffix, other_names):
@@ -301,9 +302,10 @@ class WorkspaceManager:
 			name = name.replace(".", "_")
 			return name
 
-		dimension_names = ("genes", "cells")
+		dimension_names = ("genes", "cells", "clusters")
 		genes_dim = dimension_names[0]
 		cells_dim = dimension_names[1]
+		clusters_dim = dimension_names[2]
 		with loompy.connect(f, validate=False) as ds:
 			self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
 			self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
@@ -351,7 +353,28 @@ class WorkspaceManager:
 			self["Ambiguous"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=a)
 			self["Spliced"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=s)
 			self["Expression"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u + s + a)
-			
+
+		if fagg is not None:
+			with loompy.connect(fagg, validate=False) as ds:
+				self[clusters_dim] = shoji.Dimension(shape=ds.shape[1])
+
+			if verbose:
+				logging.info("Loading column attributes from .agg")
+			for key, vals in ds.ca.items():
+				try:
+					dtype = ds.ca[key].dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{key}' of '{f}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+				name = fix_name(key, clusters_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+				dims = (clusters_dim,) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
+			if verbose:
+				logging.info("Loading .agg layers")
+			x = ds.layers[""][:, :].T.astype("float32")
+			self["MeanExpression"] = shoji.Tensor("uint16", (clusters_dim, genes_dim), inits=x)
+
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
 		dimensions = [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]

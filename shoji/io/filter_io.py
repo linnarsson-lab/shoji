@@ -77,7 +77,7 @@ def const_compare_non_transactional(wsm: "shoji.WorkspaceManager", name: str, op
 			temp = []
 			for k, _ in tr.get_range(start, stop, limit=n):
 				temp.append(index.unpack(k)[1])
-			if len(temp) > 0:	
+			if len(temp) > 0:
 				next_start = tr.get_key(fdb.KeySelector.first_greater_than(k)).value
 				result += temp
 		except fdb.impl.FDBError as e:

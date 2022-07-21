@@ -498,6 +498,8 @@ class Tensor:
 			rows = np.where(rows)[0]
 		if np.issubdtype(cols.dtype, np.bool_):
 			cols = np.where(cols)[0]
+		rows = np.sort(rows)
+		cols = np.sort(cols)
 
 		n_rows = rows.shape[0]
 		n_cols = cols.shape[0]
