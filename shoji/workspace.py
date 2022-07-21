@@ -115,6 +115,7 @@ import h5py
 import pickle
 from codecs import decode,encode
 from tqdm import trange
+import pandas as pd
 
 	
 class Workspace:
@@ -523,7 +524,32 @@ class WorkspaceManager:
 						except OSError as e:
 							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
 							raise e
-
+	def create_anndata(self,only_selected:bool = True, obsm:List[str] = ['Factors']):
+		import scanpy as sc
+		import scipy
+		n_cells = len(self['cells'])
+		n_genes = len(self['genes'])
+		if(only_selected):
+			ind = np.where(self._get_tensor('SelectedFeatures')[:]==True)[0]
+		else:
+			ind =np.ones(n_genes)
+		
+		df = pd.DataFrame(data = self._get_tensor('Expression')[:,ind],dtype = 'int64' ,index = self._get_tensor('CellID')[:],columns=self._get_tensor('Accession')[ind] )
+		adata =sc.AnnData(df)
+		for tname in self._tensors():
+			if(tname in ['Expression','CellID','Accession']):
+				continue
+			tensor = self._get_tensor(tname)
+			if(tensor.shape==(n_cells,)):
+				adata.obs[tname] = tensor[:]
+			elif(tensor.shape==(n_genes,)):
+				adata.var[tname] = tensor[ind]
+			elif(tensor.shape==(n_cells,n_genes)):
+				adata.layers[tname] = scipy.sparse.csr_matrix(tensor[:,ind])
+			else:
+				if(tname in  obsm):
+					adata.obsm[tname] = tensor[:]
+		return(adata)	
 def create_workspace(db: "WorkspaceManager", path: str) -> "WorkspaceManager":
 	"""
 	Create a new workspace with the given path, unless it already exists
