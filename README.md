@@ -4,7 +4,17 @@
 
 Shoji requires Python 3.7+ (we recommend Anaconda)
 
-First, in your terminal, install the shoji Python package:
+First, install the FOundationDb client:
+
+1. [Download FoundationDB](https://apple.github.io/foundationdb/downloads.html)
+2. Double-click on FoundationDB-6.#.##.pkg and follow the instructions
+    
+    <aside>
+    💡 If you get a security error (“FoundationDB-6.2.27.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
+    
+    </aside>
+
+Next, in your terminal, install the shoji Python package:
 
 ```
 $ git clone https://github.com/linnarsson-lab/shoji.git
@@ -33,7 +43,7 @@ Typing db alone at the last line above should return a representation of the con
 Shoji is based on FoundationDB. You can easily set up a local Shoji database by following these instructions:
 
 1. [Download FoundationDB](https://apple.github.io/foundationdb/downloads.html)
-2. Double-click on FoundationDB-6.2.27.pkg and follow the instructions
+2. Double-click on FoundationDB-6.#.##.pkg and follow the instructions
     
     <aside>
     💡 If you get a security error (“FoundationDB-6.2.27.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
