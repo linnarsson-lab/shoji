@@ -13,10 +13,11 @@ First, install the FoundationDb client:
     💡 If you get a security error (“FoundationDB-6.2.27.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
     
     </aside>
-
-Next, in your terminal, install the shoji Python package:
+    
+Next, in your terminal, install the foundationdb and shoji Python packages:
 
 ```
+$ pip install foundationdb
 $ git clone https://github.com/linnarsson-lab/shoji.git
 $ pip install -e shoji
 ```
