@@ -4,7 +4,7 @@
 
 Shoji requires Python 3.7+ (we recommend Anaconda)
 
-First, install the FOundationDb client:
+First, install the FoundationDb client:
 
 1. [Download FoundationDB](https://apple.github.io/foundationdb/downloads.html)
 2. Double-click on FoundationDB-6.#.##.pkg and follow the instructions
