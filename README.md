@@ -1,4 +1,4 @@
-
+    💡 This is an early preview version, subject to breaking changes. 
 
 # Getting started with Shoji
 
@@ -31,6 +31,10 @@ db
 ```
 
 Typing db alone at the last line above should return a representation of the contents of the database (which might be empty at this point).
+
+## Documentation
+
+Clone the repository, and then go to the `shoji/html` folder to browse the docs.
 
 # Setting up a Shoji database on macOS
 
