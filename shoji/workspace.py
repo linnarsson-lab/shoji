@@ -524,18 +524,21 @@ class WorkspaceManager:
 						except OSError as e:
 							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
 							raise e
-	def create_anndata(self,only_selected:bool = True, obsm:List[str] = ['Factors']):
+	def create_anndata(self,only_selected:bool = False, obsm:List[str] = ['Factors'],valid_genes:List[bool] = None):
 		import scanpy as sc
 		import scipy
+		
 		n_cells = len(self['cells'])
 		n_genes = len(self['genes'])
 		if(only_selected):
 			ind = np.where(self._get_tensor('SelectedFeatures')[:]==True)[0]
+		elif(valid_genes is not None):
+			ind = np.where(valid_genes)[0]
 		else:
 			ind =np.ones(n_genes)
-		
-		df = pd.DataFrame(data = self._get_tensor('Expression')[:,ind],dtype = 'int64' ,index = self._get_tensor('CellID')[:],columns=self._get_tensor('Accession')[ind] )
-		adata =sc.AnnData(df)
+		adata = sc.AnnData(scipy.sparse.csr_matrix(self._get_tensor('Expression')[:,ind] , dtype=np.float32))
+		adata.obs_names = self._get_tensor('CellID')[:]
+		adata.var_names = self._get_tensor('Accession')[ind]	
 		for tname in self._tensors():
 			if(tname in ['Expression','CellID','Accession']):
 				continue
