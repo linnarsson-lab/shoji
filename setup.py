@@ -19,7 +19,7 @@ setup(
 	install_requires=[
 		"blosc",
 		"tqdm",
-		"foundationdb",
+		"foundationdb==6.3.24",
 		"loompy"
 	],
 	# metadata for upload to PyPI
