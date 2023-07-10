@@ -375,7 +375,6 @@ class WorkspaceManager:
 					logging.info("Loading .agg layers")
 				x = ds.layers[""][:, :].T.astype("float32")
 				self["MeanExpression"] = shoji.Tensor("float32", (clusters_dim, genes_dim), inits=x)
-
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
 		dimensions = [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
@@ -524,6 +523,155 @@ class WorkspaceManager:
 						except OSError as e:
 							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
 							raise e
+	def import_adata(self, adata: str, uns = False, obsm = False, obsp = False, layers = False, verbose: bool = False) -> None:
+		"""
+		Load a anndata file into a workspace
+
+		Args:
+			adata			anndata 
+			uns				If true add the uns tensors
+			obsm			If true add the obsm tensors
+			obsp 			If true add the obsp tensors
+			layers 			If true add the layers tensors
+			verbose			If true, log progress
+		"""
+
+		def fix_name_adata(name):
+			if not name[0].isupper():
+				name = name.capitalize()
+			if not name[0].isupper():
+				name = "X_" + name
+			name = name.replace(".", "_")
+			return name
+
+		dimension_names = ("genes", "cells", "clusters")
+		genes_dim = dimension_names[0]
+		cells_dim = dimension_names[1]
+		clusters_dim = dimension_names[2]
+		self[genes_dim] = shoji.Dimension(shape=adata.shape[1])
+		self[cells_dim] = shoji.Dimension(shape=adata.shape[0])
+
+		if adata.var.keys().shape[0]>0:
+			if verbose:
+				logging.info("Loading gene attributes")
+			for k in adata.var.keys():
+				vals = adata.var[k]
+				if not isinstance(vals, np.ndarray):
+					vals= vals.to_numpy()
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (genes_dim, ) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+	
+			
+		if adata.obs.keys().shape[0]>0:
+			if verbose:
+				logging.info("Loading cells attributes")
+			for k in adata.obs.keys():
+				vals = adata.obs[k]
+				if not isinstance(vals, np.ndarray):
+					vals= vals.to_numpy()
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (cells_dim, ) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+		if uns:
+			if verbose:
+				logging.info("Loading uns attributes")
+			for k in adata.uns.keys():
+				vals = adata.uns[k]
+				if not isinstance(vals, np.ndarray):
+					vals= vals.to_numpy()
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims =  vals.shape
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+		if obsm:
+			if verbose:
+				logging.info("Loading obsm")
+			for k in adata.obsm.keys():
+				vals = adata.obsm[k]
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (cells_dim, ) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+		if obsp:
+			if verbose:
+				logging.info("Loading obsp")
+			for k in adata.obsp.keys():
+				vals = adata.obsp[k]
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping obsp attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = vals.shape
+				if(isinstance(vals, np.ndarray)):
+					self[name] = shoji.Tensor(dtype, dims, inits=vals)
+				else:
+					self[name] = shoji.Tensor(dtype, dims, inits=vals.to_array())	
+		if layers:
+			if verbose:
+				logging.info("Loading Layers")
+			for k in adata.layers.keys():
+				vals = adata.layers[k]
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (cells_dim,genes_dim)
+				if(isinstance(vals, np.ndarray)):
+					self[name] = shoji.Tensor(dtype, dims, inits=vals)
+				else:
+					self[name] = shoji.Tensor(dtype, dims, inits=vals.to_array())	
+		vals = adata.X
+		if(isinstance(adata.X, np.ndarray)):	
+			self["Expression"] = shoji.Tensor(vals.dtype, (cells_dim, genes_dim), inits=vals)
+		else:
+			self["Expression"] = shoji.Tensor(vals.dtype, (cells_dim, genes_dim), inits=vals.toarray())
+
+		vals = adata.obs_names 
+		if not isinstance(vals, np.ndarray):
+			vals= vals.to_numpy()
+		dtype = "string" if vals.dtype == "object" else dtype
+		self["CellID"] = shoji.Tensor(dtype, (cells_dim,), inits=vals)
+		vals = adata.var_names 
+		if not isinstance(vals, np.ndarray):
+			vals= vals.to_numpy()
+		dtype = "string" if vals.dtype == "object" else dtype
+		self["Gene"] = shoji.Tensor(dtype, (genes_dim,), inits=vals)
+
 	def create_anndata(self,only_selected:bool = False, obsm:List[str] = ['Factors'],valid_genes:List[bool] = None):
 		import scanpy as sc
 		import scipy
