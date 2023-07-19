@@ -102,7 +102,7 @@ del db.scRNA
 
 **WARNING**: Deleting a workspace takes effect immediately and without confirmation. All sub-workspaces and all tensors and dimensions that they contain are deleted. The action cannot be undone.
 """
-from typing import Any, Tuple, Union, List, Dict
+from typing import Any, Tuple, Union, List, Literal
 import fdb
 import os
 import numpy as np
@@ -671,8 +671,40 @@ class WorkspaceManager:
 			vals= vals.to_numpy()
 		dtype = "string" if vals.dtype == "object" else dtype
 		self["Gene"] = shoji.Tensor(dtype, (genes_dim,), inits=vals)
+	
+	def anndata(self, 
+		 *,
+	     X: str = "Expression",
+		 var: Union[Literal["auto"], Tuple[str]] = "auto",
+		 obs: Union[Literal["auto"], Tuple[str]] = (),
+		 uns: Union[Literal["auto"], Tuple[str]] = (),
+		 varm: Union[Literal["auto"], Tuple[str]] = (),
+		 obsm: Union[Literal["auto"], Tuple[str]] = (),
+		 var_key: str = "Accession",
+	     obs_key: str = "CellID",
+	     layers: Union[Literal["auto"], Tuple[str]] = ()
+		 ):
+		"""
+		Create an anndata object by collecting tensors according to the specification
 
-	def create_anndata(self,only_selected:bool = False, obsm:List[str] = ['Factors'],valid_genes:List[bool] = None):
+		Args:
+			X		The main expression matrix, usually "Expression" (which is the default)
+			var		Rank-1 tensors along the genes dimension, e.g. ("Gene", "Chromosome", "Start"); "auto" collects all rank-1 tensors on the genes dimension
+			obs		Rank-1 tensors along the cells dimension, e.g. ("Tissue", "TotalUMI"); "auto" collects all rank-1 tensors on the cells dimension
+			varm	Rank >1 tensors along the genes dimension, e.g. ("Loadings",); "auto" collects all rank >1 tensors on the genes dimension
+			obsm	Rank >1 tensors along the cells dimension, e.g. ("Loadings",); "auto" collects all rank >1 tensors on the cells dimension (but not those on ("cells", "genes"))
+			var_key	The unique var primary key, which must be one of the var tensors; default is "Accession"
+			obs_key	The unique obs primary key, which must be one of the obs tensors; default is "CellID"
+			layers	Additional expression matrices, e.g. ("Unspliced",)
+
+		Remarks:
+			To rename a tensor, use "OldName->NewName" notation. For example, "Embedding->X_embedding" can be used
+			to create an embedding compatible with cellxgene. If you use "auto" to automatically collect relevant tensors,
+			you can still rename tensors by adding them after "auto" in a tuple: ("auto", "TotalUMIs->UMI_count")
+		"""
+		return shoji.View(self, ()).anndata(X=X, var=var, obs=obs, varm=varm, obsm=obsm, var_key=var_key, obs_key=obs_key, layers=layers)
+	
+	def create_anndata(self, only_selected:bool = False, obsm:List[str] = ['Factors'], valid_genes:List[bool] = None):
 		import scanpy as sc
 		import scipy
 		
@@ -683,8 +715,8 @@ class WorkspaceManager:
 		elif(valid_genes is not None):
 			ind = np.where(valid_genes)[0]
 		else:
-			ind =np.ones(n_genes)
-		adata = sc.AnnData(scipy.sparse.csr_matrix(self._get_tensor('Expression')[:,ind] , dtype=np.float32))
+			ind = np.ones(n_genes)
+		adata = sc.AnnData(scipy.sparse.csr_matrix(self._get_tensor('Expression')[:, ind] , dtype=np.float32))
 		adata.obs_names = self._get_tensor('CellID')[:]
 		adata.var_names = self._get_tensor('Accession')[ind]	
 		for tname in self._tensors():
@@ -700,7 +732,8 @@ class WorkspaceManager:
 			else:
 				if(tname in  obsm):
 					adata.obsm[tname] = tensor[:]
-		return(adata)	
+		return(adata)
+
 def create_workspace(db: "WorkspaceManager", path: str) -> "WorkspaceManager":
 	"""
 	Create a new workspace with the given path, unless it already exists
