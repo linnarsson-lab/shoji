@@ -137,8 +137,8 @@ class View:
 			X		The main expression matrix, usually "Expression" (which is the default)
 			var		Rank-1 tensors along the genes dimension, e.g. ("Gene", "Chromosome", "Start"); "auto" collects all rank-1 tensors on the genes dimension
 			obs		Rank-1 tensors along the cells dimension, e.g. ("Tissue", "TotalUMI"); "auto" collects all rank-1 tensors on the cells dimension
-			varm	Rank >1 tensors along the genes dimension, e.g. ("Loadings",); "auto" collects all rank >1 tensors on the genes dimension
-			obsm	Rank >1 tensors along the cells dimension, e.g. ("Loadings",); "auto" collects all rank >1 tensors on the cells dimension (but not those on ("cells", "genes"))
+			varm	Rank 2 tensors along the genes dimension, e.g. ("Loadings",); "auto" collects all rank 2 tensors on the genes dimension
+			obsm	Rank 2 tensors along the cells dimension, e.g. ("Loadings",); "auto" collects all rank 2 tensors on the cells dimension (but not those on ("cells", "genes"))
 			var_key	The unique var primary key, which must be one of the var tensors; default is "Accession"
 			obs_key	The unique obs primary key, which must be one of the obs tensors; default is "CellID"
 			layers	Additional expression matrices, e.g. ("Unspliced",)
