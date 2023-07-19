@@ -29,7 +29,7 @@ silently overwrites the existing chunk.
 
 
 @fdb.transactional
-def write_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any], addresses: np.ndarray, chunks: List[Union[np.ndarray, MaskedArray]]) -> int:
+def write_chunks(tr, subspace, key_prefix: Tuple[Any], addresses: np.ndarray, chunks: List[Union[np.ndarray, MaskedArray]]) -> int:
 	"""
 	Write a list of chunks to the database, optionally using mask to write only partially
 
@@ -74,7 +74,7 @@ def write_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Director
 	return n_bytes_written
 
 @fdb.transactional
-def read_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any], addresses: np.ndarray) -> List[np.ndarray]:
+def read_chunks(tr, subspace, key_prefix: Tuple[Any], addresses: np.ndarray) -> List[np.ndarray]:
 	"""
 	Read a list of chunks from the database, using a transaction
 
@@ -115,7 +115,7 @@ def read_chunks(tr: fdb.impl.Transaction, subspace: fdb.directory_impl.Directory
 
 
 # Note: no @fdb.transactional decorator since this uses multiple transanctions inside the function
-def read_chunks_multibatch(db: fdb.impl.Database, subspace: fdb.directory_impl.DirectorySubspace, key_prefix: Tuple[Any, ...], addresses: np.ndarray) -> List[np.ndarray]:
+def read_chunks_multibatch(db, subspace, key_prefix: Tuple[Any, ...], addresses: np.ndarray) -> List[np.ndarray]:
 	chunks = []
 	n_total = len(addresses)
 	n = min(200, n_total)
