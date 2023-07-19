@@ -65,7 +65,6 @@ from shoji.io import Compartment
 import numpy as np
 import scipy.sparse as sparse
 
-
 class View:
 	def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter, ...]) -> None:
 		super().__setattr__("filters", {f.dim: f for f in filters})
@@ -150,6 +149,7 @@ class View:
 			you can still rename tensors by adding them after "auto" in a tuple: ("auto", "TotalUMIs->UMI_count")
 		"""
 		import scanpy as sc
+		import pandas as pd
 
 		n_cells = self.get_length("cells")
 		n_genes = self.get_length("genes")
@@ -211,4 +211,4 @@ class View:
 			old, new = renamed(layer)
 			layers_data[new] = load_csr(old)
 
-		return sc.AnnData(X=X_data, obs=obs_data, var=var_data, obsm=obsm_data, varm=varm_data, layers=layers_data)
+		return sc.AnnData(X=X_data, obs=pd.DataFrame(obs_data).set_index(obs_key), var=pd.DataFrame(var_data).set_index(var_key), obsm=obsm_data, varm=varm_data, layers=layers_data)
