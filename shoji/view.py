@@ -209,4 +209,7 @@ class View:
 			old, new = renamed(layer)
 			layers_data[new] = load_csr(old)
 
-		return sc.AnnData(X=X_data, obs=pd.DataFrame(obs_data).set_index(obs_key), var=pd.DataFrame(var_data).set_index(var_key), obsm=obsm_data, varm=varm_data, layers=layers_data)
+		ad = sc.AnnData(X=X_data, obs=pd.DataFrame(obs_data).set_index(obs_key), var=pd.DataFrame(var_data).set_index(var_key), obsm=obsm_data, varm=varm_data, layers=layers_data)
+		ad.var_names_make_unique()
+		ad.obs_names_make_unique()
+		return ad
