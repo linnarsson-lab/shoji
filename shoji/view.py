@@ -212,4 +212,14 @@ class View:
 		ad = sc.AnnData(X=X_data, obs=pd.DataFrame(obs_data).set_index(obs_key), var=pd.DataFrame(var_data).set_index(var_key), obsm=obsm_data, varm=varm_data, layers=layers_data)
 		ad.var_names_make_unique()
 		ad.obs_names_make_unique()
+
+		# Make variables categorical if the number of distinct values is less than 10% of the total
+		for col in ad.obs.columns:
+			if len(np.unique(ad.obs[col].values)) < 0.1 * len(ad.obs):
+				ad.obs[col] = ad.obs[col].astype("category")
+
+		for col in ad.var.columns:
+			if len(np.unique(ad.var[col].values)) < 0.1 * len(ad.var):
+				ad.var[col] = ad.var[col].astype("category")
+
 		return ad
