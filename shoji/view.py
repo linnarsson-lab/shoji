@@ -118,17 +118,18 @@ class View:
 	def __setitem__(self, name: str, vals: np.ndarray) -> None:
 		return self.__setattr__(name, vals)
 
+
 	def anndata(self, 
-		 *,
-	     X: str = "Expression",
-		 var: Union[Literal["auto"], Tuple[str]] = "auto",
-		 obs: Union[Literal["auto"], Tuple[str]] = "auto",
-		 varm: Union[Literal["auto"], Tuple[str]] = "auto",
-		 obsm: Union[Literal["auto"], Tuple[str]] = "auto",
-		 var_key: str = "Accession",
-	     obs_key: str = "CellID",
-	     layers: Tuple[str] = ()
-		 ):
+		*,
+		X: str = "Expression",
+		var: Union[Literal["auto"], Tuple[str]] = "auto",
+		obs: Union[Literal["auto"], Tuple[str]] = "auto",
+		varm: Union[Literal["auto"], Tuple[str]] = "auto",
+		obsm: Union[Literal["auto"], Tuple[str]] = "auto",
+		var_key: str = "Accession",
+		obs_key: str = "CellID",
+		layers: Tuple[str] = ()
+		):
 		"""
 		Create an anndata object by collecting tensors according to the specification
 
@@ -154,15 +155,13 @@ class View:
 		n_genes = self.get_length("genes")
 
 		def load_csr(tname):
-			result = None
 			n_cells_per_batch = 1000
+			tensor = self.wsm[tname]
+			result = []
 			for ix in range(0, n_cells, n_cells_per_batch):
-				batch = sparse.csr_matrix(self._read_batch(self.wsm[tname], ix, ix + n_cells_per_batch))
-				if result is None:
-					result = batch
-				else:
-					result = sparse.vstack(result, batch)
-			return result
+				batch = sparse.csr_matrix(self._read_batch(tensor, ix, ix + n_cells_per_batch))
+				result.append(batch)
+			return sparse.vstack(result)
 
 		def renamed(old):
 			if "->" in old:
@@ -203,7 +202,7 @@ class View:
 		var_data = load_dense(var, dim="genes", rank=1)
 		obs_data = load_dense(obs, dim="cells", rank=1)
 		varm_data = load_dense(varm, dim="genes", rank=2)
-		obsm_data = load_dense(obsm, dim="genes", rank=2)
+		obsm_data = load_dense(obsm, dim="cells", rank=2)
 
 		layers_data = {}
 		for layer in layers:
