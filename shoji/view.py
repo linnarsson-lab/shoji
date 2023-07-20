@@ -157,7 +157,7 @@ class View:
 			result = None
 			n_cells_per_batch = 1000
 			for ix in range(0, n_cells, n_cells_per_batch):
-				batch = sparse.csr_matrix(self._read_batch(tname, ix, ix + n_cells_per_batch))
+				batch = sparse.csr_matrix(self._read_batch(self.wsm[tname], ix, ix + n_cells_per_batch))
 				if result is None:
 					result = batch
 				else:
