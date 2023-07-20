@@ -13,8 +13,7 @@ shoji.connect(file_path, workspace_path, kind=None)
 To support strong typing, distinguish between accessing workspace and accessing tensors and dimensions:
 
 db = shoji.connect()  # db is now always a Workspace
-ws = db / "builds" / "sten" / "gbm"  # access sub-workspaces
+ws = db / "builds" / "sten" / "gbm"  # access sub-workspaces, type is always Workspace
 ws = db / "builds/sten/gbm"  # same result
-ws.Tensor  # Only tensors accessed like this
-ws.dims_("cells")  # The dimensions can be accessed like this
-
+ws.Tensor  # Only tensors accessed like this, so type is always Tensor
+ws.dimension("cells")  # The dimensions can be accessed like this
