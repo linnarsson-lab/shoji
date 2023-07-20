@@ -122,13 +122,12 @@ class View:
 		 *,
 	     X: str = "Expression",
 		 var: Union[Literal["auto"], Tuple[str]] = "auto",
-		 obs: Union[Literal["auto"], Tuple[str]] = (),
-		 uns: Union[Literal["auto"], Tuple[str]] = (),
-		 varm: Union[Literal["auto"], Tuple[str]] = (),
-		 obsm: Union[Literal["auto"], Tuple[str]] = (),
+		 obs: Union[Literal["auto"], Tuple[str]] = "auto",
+		 varm: Union[Literal["auto"], Tuple[str]] = "auto",
+		 obsm: Union[Literal["auto"], Tuple[str]] = "auto",
 		 var_key: str = "Accession",
 	     obs_key: str = "CellID",
-	     layers: Union[Literal["auto"], Tuple[str]] = ()
+	     layers: Tuple[str] = ()
 		 ):
 		"""
 		Create an anndata object by collecting tensors according to the specification
@@ -202,9 +201,9 @@ class View:
 
 		X_data = load_csr(X)
 		var_data = load_dense(var, dim="genes", rank=1)
-		obs_data = load_dense(var, dim="cells", rank=1)
-		varm_data = load_dense(var, dim="genes", rank=2)
-		obsm_data = load_dense(var, dim="genes", rank=2)
+		obs_data = load_dense(obs, dim="cells", rank=1)
+		varm_data = load_dense(varm, dim="genes", rank=2)
+		obsm_data = load_dense(obsm, dim="genes", rank=2)
 
 		layers_data = {}
 		for layer in layers:

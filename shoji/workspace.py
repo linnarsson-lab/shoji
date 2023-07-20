@@ -676,13 +676,12 @@ class WorkspaceManager:
 		 *,
 	     X: str = "Expression",
 		 var: Union[Literal["auto"], Tuple[str]] = "auto",
-		 obs: Union[Literal["auto"], Tuple[str]] = (),
-		 uns: Union[Literal["auto"], Tuple[str]] = (),
-		 varm: Union[Literal["auto"], Tuple[str]] = (),
-		 obsm: Union[Literal["auto"], Tuple[str]] = (),
+		 obs: Union[Literal["auto"], Tuple[str]] = "auto",
+		 varm: Union[Literal["auto"], Tuple[str]] = "auto",
+		 obsm: Union[Literal["auto"], Tuple[str]] = "auto",
 		 var_key: str = "Accession",
 	     obs_key: str = "CellID",
-	     layers: Union[Literal["auto"], Tuple[str]] = ()
+	     layers: Tuple[str] = ()
 		 ):
 		"""
 		Create an anndata object by collecting tensors according to the specification
