@@ -58,7 +58,11 @@ grouped = ws[:].groupby("ClusterID")
 
 
 """
-from typing import Tuple, Callable, Union, List, Literal
+from typing import Tuple, Callable, Union, List
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import shoji
 import shoji.io
 from shoji.io import Compartment

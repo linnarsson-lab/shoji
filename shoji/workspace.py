@@ -102,7 +102,11 @@ del db.scRNA
 
 **WARNING**: Deleting a workspace takes effect immediately and without confirmation. All sub-workspaces and all tensors and dimensions that they contain are deleted. The action cannot be undone.
 """
-from typing import Any, Tuple, Union, List, Literal
+from typing import Any, Tuple, Union, List
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import fdb
 import os
 import numpy as np
