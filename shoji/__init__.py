@@ -164,9 +164,12 @@ Perform complex database operations atomically.
 """
 import fdb
 try:
-    fdb.api_version(630)
+    fdb.api_version(720)
 except RuntimeError:
-    fdb.api_version(620)
+    try:
+        fdb.api_version(630)
+    except RuntimeError:
+        fdb.api_version(620)
 
 from .dimension import Dimension
 from .tensor import Tensor, TensorValue

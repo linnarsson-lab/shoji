@@ -59,11 +59,15 @@ grouped = ws[:].groupby("ClusterID")
 
 """
 from typing import Tuple, Callable, Union, List
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import shoji
 import shoji.io
 from shoji.io import Compartment
 import numpy as np
-
+import scipy.sparse as sparse
 
 class View:
 	def __init__(self, wsm: shoji.WorkspaceManager, filters: Tuple[shoji.Filter, ...]) -> None:
@@ -117,3 +121,109 @@ class View:
 
 	def __setitem__(self, name: str, vals: np.ndarray) -> None:
 		return self.__setattr__(name, vals)
+
+
+	def anndata(self, 
+		*,
+		X: str = "Expression",
+		var: Union[Literal["auto"], Tuple[str]] = "auto",
+		obs: Union[Literal["auto"], Tuple[str]] = "auto",
+		varm: Union[Literal["auto"], Tuple[str]] = "auto",
+		obsm: Union[Literal["auto"], Tuple[str]] = "auto",
+		var_key: str = "Accession",
+		obs_key: str = "CellID",
+		layers: Tuple[str] = ()
+		):
+		"""
+		Create an anndata object by collecting tensors according to the specification
+
+		Args:
+			X		The main expression matrix, usually "Expression" (which is the default)
+			var		Rank-1 tensors along the genes dimension, e.g. ("Gene", "Chromosome", "Start"); "auto" collects all rank-1 tensors on the genes dimension
+			obs		Rank-1 tensors along the cells dimension, e.g. ("Tissue", "TotalUMI"); "auto" collects all rank-1 tensors on the cells dimension
+			varm	Rank 2 tensors along the genes dimension, e.g. ("Loadings",); "auto" collects all rank 2 tensors on the genes dimension
+			obsm	Rank 2 tensors along the cells dimension, e.g. ("Loadings",); "auto" collects all rank 2 tensors on the cells dimension (but not those on ("cells", "genes"))
+			var_key	The unique var primary key, which must be one of the var tensors; default is "Accession"
+			obs_key	The unique obs primary key, which must be one of the obs tensors; default is "CellID"
+			layers	Additional expression matrices, e.g. ("Unspliced",)
+
+		Remarks:
+			To rename a tensor, use "OldName->NewName" notation. For example, "Embedding->X_embedding" can be used
+			to create an embedding compatible with cellxgene. If you use "auto" to automatically collect relevant tensors,
+			you can still rename tensors by adding them after "auto" in a tuple: ("auto", "TotalUMIs->UMI_count")
+		"""
+		import scanpy as sc
+		import pandas as pd
+
+		n_cells = self.get_length("cells")
+		n_genes = self.get_length("genes")
+
+		def load_csr(tname):
+			n_cells_per_batch = 1000
+			tensor = self.wsm[tname]
+			result = []
+			for ix in range(0, n_cells, n_cells_per_batch):
+				batch = sparse.csr_matrix(self._read_batch(tensor, ix, ix + n_cells_per_batch))
+				result.append(batch)
+			return sparse.vstack(result)
+
+		def renamed(old):
+			if "->" in old:
+				old, new = old.split("->")
+			else:
+				new = old
+			return old, new
+
+		def load_dense(names, *, dim, rank):
+			result = {}
+			renamings = {}
+			if isinstance(names, (tuple, list)):
+				for old in names:
+					if old == "auto":
+						continue
+					old, new = renamed(old)
+					renamings[old] = new
+
+			if names == "auto" or (isinstance(names, (tuple, list)) and names[0] == "auto"):
+				names = []
+				# Collect all relevant tensors
+				for tname in self.wsm._tensors():
+					tensor = self.wsm[tname]
+					if tensor.rank == rank and tensor.dims[0] == dim:
+						# Skip matrices that look like layers
+						if tensor.rank == 2 and tensor.dims[1] == "genes":
+							continue
+						names.append(tname)
+						if tname not in renamings:
+							renamings[tname] = tname
+
+			# Now names is a list or tuple of tensor names, and renamings map old to new names
+			for name in names:
+				result[renamings[name]] = self[name]
+			return result
+
+		X_data = load_csr(X)
+		var_data = load_dense(var, dim="genes", rank=1)
+		obs_data = load_dense(obs, dim="cells", rank=1)
+		varm_data = load_dense(varm, dim="genes", rank=2)
+		obsm_data = load_dense(obsm, dim="cells", rank=2)
+
+		layers_data = {}
+		for layer in layers:
+			old, new = renamed(layer)
+			layers_data[new] = load_csr(old)
+
+		ad = sc.AnnData(X=X_data, obs=pd.DataFrame(obs_data).set_index(obs_key), var=pd.DataFrame(var_data).set_index(var_key), obsm=obsm_data, varm=varm_data, layers=layers_data)
+		ad.var_names_make_unique()
+		ad.obs_names_make_unique()
+
+		# Make variables categorical if the number of distinct values is less than 10% of the total
+		for col in ad.obs.columns:
+			if len(np.unique(ad.obs[col].values)) < 0.1 * len(ad.obs):
+				ad.obs[col] = ad.obs[col].astype("category")
+
+		for col in ad.var.columns:
+			if len(np.unique(ad.var[col].values)) < 0.1 * len(ad.var):
+				ad.var[col] = ad.var[col].astype("category")
+
+		return ad

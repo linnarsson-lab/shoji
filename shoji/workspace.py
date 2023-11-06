@@ -102,7 +102,11 @@ del db.scRNA
 
 **WARNING**: Deleting a workspace takes effect immediately and without confirmation. All sub-workspaces and all tensors and dimensions that they contain are deleted. The action cannot be undone.
 """
-from typing import Any, Tuple, Union, List, Dict
+from typing import Any, Tuple, Union, List
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
 import fdb
 import os
 import numpy as np
@@ -115,6 +119,7 @@ import h5py
 import pickle
 from codecs import decode,encode
 from tqdm import trange
+import pandas as pd
 
 	
 class Workspace:
@@ -283,13 +288,14 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
-	def _from_loom(self, f: str, verbose: bool = False) -> None:
+	def _from_loom(self, f: str, fagg: str = None, verbose: bool = False) -> None:
 		"""
-		Load a loom files into a workspace
+		Load a loom file into a workspace
 
 		Args:
-			f						Filename (full path)
-			verbose					If true, log progress
+			f				Filename (full path)
+			fagg			Optional .agg file to import on the clusters dimension
+			verbose			If true, log progress
 		"""
 
 		def fix_name(name, suffix, other_names):
@@ -301,10 +307,11 @@ class WorkspaceManager:
 			name = name.replace(".", "_")
 			return name
 
-		dimension_names = ("genes", "cells")
+		dimension_names = ("genes", "cells", "clusters")
 		genes_dim = dimension_names[0]
 		cells_dim = dimension_names[1]
-		with loompy.connect(f, validate=False) as ds:
+		clusters_dim = dimension_names[2]
+		with loompy.connect(f, mode="r", validate=False) as ds:
 			self[genes_dim] = shoji.Dimension(shape=ds.shape[0])
 			self[cells_dim] = shoji.Dimension(shape=ds.shape[1])
 
@@ -351,7 +358,27 @@ class WorkspaceManager:
 			self["Ambiguous"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=a)
 			self["Spliced"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=s)
 			self["Expression"] = shoji.Tensor("uint16", (cells_dim, genes_dim), inits=u + s + a)
-			
+
+		if fagg is not None:
+			with loompy.connect(fagg, mode="r", validate=False) as ds:
+				self[clusters_dim] = shoji.Dimension(shape=ds.shape[1])
+
+				if verbose:
+					logging.info("Loading column attributes from .agg")
+				for key, vals in ds.ca.items():
+					try:
+						dtype = ds.ca[key].dtype.name
+					except AttributeError as e:
+						print(f"Skipping column attribute '{key}' of '{f}' because {e}")
+						continue
+					dtype = "string" if dtype == "object" else dtype
+					name = fix_name(key, clusters_dim, ds.ra.keys() + ds.layers.keys() + ds.attrs.keys())
+					dims = (clusters_dim,) + vals.shape[1:]
+					self[name] = shoji.Tensor(dtype, dims, inits=ds.ca[key])
+				if verbose:
+					logging.info("Loading .agg layers")
+				x = ds.layers[""][:, :].T.astype("float32")
+				self["MeanExpression"] = shoji.Tensor("float32", (clusters_dim, genes_dim), inits=x)
 	def __repr__(self) -> str:
 		subdirs = self._workspaces()
 		dimensions = [self._subdir[Compartment.Dimensions].unpack(k.key)[0] for k in self._db.transaction[self._subdir[Compartment.Dimensions].range()]]
@@ -500,6 +527,215 @@ class WorkspaceManager:
 						except OSError as e:
 							print(tname, ix, dtype, tensor.dtype, self[tname][ix:end].dtype)
 							raise e
+	def import_adata(self, adata: str, uns = False, obsm = False, obsp = False, layers = False, verbose: bool = False) -> None:
+		"""
+		Load a anndata file into a workspace
+
+		Args:
+			adata			anndata 
+			uns				If true add the uns tensors
+			obsm			If true add the obsm tensors
+			obsp 			If true add the obsp tensors
+			layers 			If true add the layers tensors
+			verbose			If true, log progress
+		"""
+
+		def fix_name_adata(name):
+			if not name[0].isupper():
+				name = name.capitalize()
+			if not name[0].isupper():
+				name = "X_" + name
+			name = name.replace(".", "_")
+			return name
+
+		dimension_names = ("genes", "cells", "clusters")
+		genes_dim = dimension_names[0]
+		cells_dim = dimension_names[1]
+		clusters_dim = dimension_names[2]
+		self[genes_dim] = shoji.Dimension(shape=adata.shape[1])
+		self[cells_dim] = shoji.Dimension(shape=adata.shape[0])
+
+		if adata.var.keys().shape[0]>0:
+			if verbose:
+				logging.info("Loading gene attributes")
+			for k in adata.var.keys():
+				vals = adata.var[k]
+				if not isinstance(vals, np.ndarray):
+					vals= vals.to_numpy()
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (genes_dim, ) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+	
+			
+		if adata.obs.keys().shape[0]>0:
+			if verbose:
+				logging.info("Loading cells attributes")
+			for k in adata.obs.keys():
+				vals = adata.obs[k]
+				if not isinstance(vals, np.ndarray):
+					vals= vals.to_numpy()
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (cells_dim, ) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+		if uns:
+			if verbose:
+				logging.info("Loading uns attributes")
+			for k in adata.uns.keys():
+				vals = adata.uns[k]
+				if not isinstance(vals, np.ndarray):
+					vals= vals.to_numpy()
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims =  vals.shape
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+		if obsm:
+			if verbose:
+				logging.info("Loading obsm")
+			for k in adata.obsm.keys():
+				vals = adata.obsm[k]
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (cells_dim, ) + vals.shape[1:]
+				self[name] = shoji.Tensor(dtype, dims, inits=vals)
+		if obsp:
+			if verbose:
+				logging.info("Loading obsp")
+			for k in adata.obsp.keys():
+				vals = adata.obsp[k]
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping obsp attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = vals.shape
+				if(isinstance(vals, np.ndarray)):
+					self[name] = shoji.Tensor(dtype, dims, inits=vals)
+				else:
+					self[name] = shoji.Tensor(dtype, dims, inits=vals.to_array())	
+		if layers:
+			if verbose:
+				logging.info("Loading Layers")
+			for k in adata.layers.keys():
+				vals = adata.layers[k]
+				try:
+					dtype = vals.dtype.name
+				except AttributeError as e:
+					print(f"Skipping column attribute '{k}' because {e}")
+					continue
+				dtype = "string" if dtype == "object" else dtype
+			
+				name = fix_name_adata(k)
+				dims = (cells_dim,genes_dim)
+				if(isinstance(vals, np.ndarray)):
+					self[name] = shoji.Tensor(dtype, dims, inits=vals)
+				else:
+					self[name] = shoji.Tensor(dtype, dims, inits=vals.to_array())	
+		vals = adata.X
+		if(isinstance(adata.X, np.ndarray)):	
+			self["Expression"] = shoji.Tensor(vals.dtype, (cells_dim, genes_dim), inits=vals)
+		else:
+			self["Expression"] = shoji.Tensor(vals.dtype, (cells_dim, genes_dim), inits=vals.toarray())
+
+		vals = adata.obs_names 
+		if not isinstance(vals, np.ndarray):
+			vals= vals.to_numpy()
+		dtype = "string" if vals.dtype == "object" else dtype
+		self["CellID"] = shoji.Tensor(dtype, (cells_dim,), inits=vals)
+		vals = adata.var_names 
+		if not isinstance(vals, np.ndarray):
+			vals= vals.to_numpy()
+		dtype = "string" if vals.dtype == "object" else dtype
+		self["Gene"] = shoji.Tensor(dtype, (genes_dim,), inits=vals)
+	
+	def anndata(self, 
+		 *,
+	     X: str = "Expression",
+		 var: Union[Literal["auto"], Tuple[str]] = "auto",
+		 obs: Union[Literal["auto"], Tuple[str]] = "auto",
+		 varm: Union[Literal["auto"], Tuple[str]] = "auto",
+		 obsm: Union[Literal["auto"], Tuple[str]] = "auto",
+		 var_key: str = "Accession",
+	     obs_key: str = "CellID",
+	     layers: Tuple[str] = ()
+		 ):
+		"""
+		Create an anndata object by collecting tensors according to the specification
+
+		Args:
+			X		The main expression matrix, usually "Expression" (which is the default)
+			var		Rank-1 tensors along the genes dimension, e.g. ("Gene", "Chromosome", "Start"); "auto" collects all rank-1 tensors on the genes dimension
+			obs		Rank-1 tensors along the cells dimension, e.g. ("Tissue", "TotalUMI"); "auto" collects all rank-1 tensors on the cells dimension
+			varm	Rank >1 tensors along the genes dimension, e.g. ("Loadings",); "auto" collects all rank >1 tensors on the genes dimension
+			obsm	Rank >1 tensors along the cells dimension, e.g. ("Loadings",); "auto" collects all rank >1 tensors on the cells dimension (but not those on ("cells", "genes"))
+			var_key	The unique var primary key, which must be one of the var tensors; default is "Accession"
+			obs_key	The unique obs primary key, which must be one of the obs tensors; default is "CellID"
+			layers	Additional expression matrices, e.g. ("Unspliced",)
+
+		Remarks:
+			To rename a tensor, use "OldName->NewName" notation. For example, "Embedding->X_embedding" can be used
+			to create an embedding compatible with cellxgene. If you use "auto" to automatically collect relevant tensors,
+			you can still rename tensors by adding them after "auto" in a tuple: ("auto", "TotalUMIs->UMI_count")
+		"""
+		return shoji.View(self, ()).anndata(X=X, var=var, obs=obs, varm=varm, obsm=obsm, var_key=var_key, obs_key=obs_key, layers=layers)
+	
+	def create_anndata(self, only_selected:bool = False, obsm:List[str] = ['Factors'], valid_genes:List[bool] = None):
+		import scanpy as sc
+		import scipy
+		
+		n_cells = len(self['cells'])
+		n_genes = len(self['genes'])
+		if(only_selected):
+			ind = np.where(self._get_tensor('SelectedFeatures')[:]==True)[0]
+		elif(valid_genes is not None):
+			ind = np.where(valid_genes)[0]
+		else:
+			ind = np.ones(n_genes)
+		adata = sc.AnnData(scipy.sparse.csr_matrix(self._get_tensor('Expression')[:, ind] , dtype=np.float32))
+		adata.obs_names = self._get_tensor('CellID')[:]
+		adata.var_names = self._get_tensor('Accession')[ind]	
+		for tname in self._tensors():
+			if(tname in ['Expression','CellID','Accession']):
+				continue
+			tensor = self._get_tensor(tname)
+			if(tensor.shape==(n_cells,)):
+				adata.obs[tname] = tensor[:]
+			elif(tensor.shape==(n_genes,)):
+				adata.var[tname] = tensor[ind]
+			elif(tensor.shape==(n_cells,n_genes)):
+				adata.layers[tname] = scipy.sparse.csr_matrix(tensor[:,ind])
+			else:
+				if(tname in  obsm):
+					adata.obsm[tname] = tensor[:]
+		return(adata)
 
 def create_workspace(db: "WorkspaceManager", path: str) -> "WorkspaceManager":
 	"""

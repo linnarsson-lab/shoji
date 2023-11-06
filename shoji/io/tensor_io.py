@@ -15,7 +15,7 @@ which are translated to and from chunks as needed.
 """
 
 @fdb.transactional
-def create_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor) -> None:
+def create_tensor(tr, wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Tensor) -> None:
 	"""
 	Creates a new tensor (but does not write the inits)
 
@@ -64,7 +64,7 @@ def initialize_tensor(wsm: "shoji.WorkspaceManager", name: str, tensor: shoji.Te
 
 
 @fdb.transactional
-def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str) -> None:
+def finish_initialization(tr, wsm: "shoji.WorkspaceManager", name: str) -> None:
 	tensor = shoji.io.get_tensor(tr, wsm, name, include_initializing=True)
 	assert tensor.initializing
 	tensor.initializing = False
@@ -86,7 +86,7 @@ def finish_initialization(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager
 
 
 @fdb.transactional
-def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name: str, *, dims: Optional[Tuple[str, int, None]] = None, shape: Optional[Tuple[int]] = None) -> None:
+def update_tensor(tr, wsm: "shoji.WorkspaceManager", name: str, *, dims: Optional[Tuple[str, int, None]] = None, shape: Optional[Tuple[int]] = None) -> None:
 	subdir = wsm._subdir
 	tensor = wsm._get_tensor(name, include_initializing=True)
 	if dims is not None:
@@ -97,7 +97,7 @@ def update_tensor(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", name:
 	tr[key] = pickle.dumps(tensor, protocol=4)
 
 @fdb.transactional
-def write_at_indices(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray) -> int:
+def write_at_indices(tr, wsm: "shoji.WorkspaceManager", key_prefix: Tuple[Any], indices: List[np.ndarray], chunk_sizes: Tuple[int], values: np.ndarray) -> int:
 	"""
 	Write values corresponding to indices along each dimension (row indices, column indices, ...), automatically managing chunks as needed
 
@@ -238,7 +238,7 @@ def dtype_class(dtype) -> Union[Type[int], Type[float], Type[bool], Type[str]]:
 	
 
 @fdb.transactional
-def append_values(tr: fdb.impl.Transaction, wsm: "shoji.WorkspaceManager", names: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
+def append_values(tr, wsm: "shoji.WorkspaceManager", names: List[str], values: List[shoji.TensorValue], axes: Tuple[int]) -> int:
 	"""
 	Returns:
 		Number of bytes written

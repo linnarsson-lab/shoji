@@ -270,7 +270,7 @@ class TensorValue:
 class Tensor:
 	valid_types = ("bool", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float16", "float32", "float64", "string")
 
-	def __init__(self, dtype: str, dims: Union[Tuple[Union[None, int, str], ...]], *, chunks: Tuple[int, ...] = None, jagged: bool = False, inits: Union[List[np.ndarray], np.ndarray] = None) -> None:
+	def __init__(self, dtype: str, dims: Tuple[Union[None, int, str], ...], *, chunks: Tuple[int, ...] = None, jagged: bool = False, inits: Union[List[np.ndarray], np.ndarray] = None) -> None:
 		"""
 		Args:
 			dtype:	string giving the datatype of the tensor elements
@@ -498,6 +498,8 @@ class Tensor:
 			rows = np.where(rows)[0]
 		if np.issubdtype(cols.dtype, np.bool_):
 			cols = np.where(cols)[0]
+		rows = np.sort(rows)
+		cols = np.sort(cols)
 
 		n_rows = rows.shape[0]
 		n_cols = cols.shape[0]
