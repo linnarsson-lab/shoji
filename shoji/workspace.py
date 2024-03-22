@@ -120,6 +120,11 @@ import pickle
 from codecs import decode,encode
 from tqdm import trange
 import pandas as pd
+import json
+import scipy.sparse as sparse
+import pyarrow.parquet as pq
+import h5py
+import pandas as pd
 
 	
 class Workspace:
@@ -288,6 +293,112 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
+	def from_xenium(self, path):
+		ws = self
+
+		logging.info("Importing experiment metadata (scalars)")
+		with open(path + "experiment.xenium") as f:
+			experiment = json.load(f)
+		for key, val in experiment.items():
+			if isinstance(val, dict):
+				continue
+			segments = [x[0].upper() + x[1:] for x in key.split("_")]
+			name = "".join(segments)
+			dtype = {int: "int64", float: "float64", str: "string"}[type(val)]
+			nptype = {int: "int64", float: "float64", str: "object"}[type(val)]
+			ws[name] = shoji.Tensor(dtype, (), inits=np.array(val, dtype=nptype))
+
+		
+		logging.info("Importing cells metadata (vectors)")
+		cells = pq.read_table(path + 'cells.parquet')
+		n_cells = cells.shape[0]
+		ws.cells = shoji.Dimension(n_cells)
+		for j in range(cells.shape[1]):
+			vals = cells.column(j).to_numpy()
+			name = cells.column_names[j]
+			segments = [x[0].upper() + x[1:] for x in name.split("_")]
+			name = "".join(segments)
+			nptype = str(vals.dtype)
+			dtype = nptype if nptype != "object" else "string"
+			ws[name] = shoji.Tensor(dtype, ("cells",), inits=vals)
+		x = ws.XCentroid[:]
+		y = ws.YCentroid[:]
+		centroid = np.vstack([x, y]).T
+		ws.Centroid = shoji.Tensor(dtype="float32", dims=("cells", 2), inits=centroid.astype("float32"))
+
+		logging.info("Importing cells and nuclei segmentations")
+		def load_polygons(boundaries):
+			vertices = np.zeros((n_cells, 2, 13))
+			for ix, cell_id in enumerate(ws.CellId[:]):
+				polygon = boundaries.filter(boundaries.column(0).to_numpy() == cell_id)
+				x = polygon.column(1).to_numpy().copy()
+				x.resize(13)
+				vertices[ix, 0, :] = x
+				y = polygon.column(2).to_numpy().copy()
+				y.resize(13)
+				vertices[ix, 1, :] = y
+			return vertices
+		
+		cell_boundaries = pq.read_table(path + 'cell_boundaries.parquet')
+		vertices = load_polygons(cell_boundaries)
+		ws.CellSegmentation = shoji.Tensor(dtype="float32", dims=("cells", 2, 13), inits=vertices.astype("float32"))
+		
+		nucleus_boundaries = pq.read_table(path + 'nucleus_boundaries.parquet')
+		vertices = load_polygons(nucleus_boundaries)
+		ws.NucleusSegmentation = shoji.Tensor(dtype="float32", dims=("cells", 2, 13), inits=vertices.astype("float32"))
+
+		logging.info("Importing transcripts (mRNA molecules)")
+		transcripts = pq.read_table(path + 'transcripts.parquet')
+		n_transcripts = transcripts.shape[0]
+		ws.transcripts = shoji.Dimension(n_transcripts)
+		ws.TranscriptId = shoji.Tensor(dtype="uint64", dims=("transcripts",), inits=transcripts.column(0).to_numpy())
+		ws.TranscriptCellId = shoji.Tensor(dtype="string", dims=("transcripts",), inits=transcripts.column(1).to_numpy())
+		ws.TranscriptGene = shoji.Tensor(dtype="string", dims=("transcripts",), inits=transcripts.column(3).to_numpy())
+		ws.TranscriptQuality = shoji.Tensor(dtype="float32", dims=("transcripts",), inits=transcripts.column(7).to_numpy().astype("float32"))
+		x = transcripts.column(4).to_numpy()
+		y = transcripts.column(5).to_numpy()
+		xy = np.vstack([x, y]).T
+		ws.TranscriptLocation = shoji.Tensor(dtype="float32", dims=("transcripts",2), inits=xy)
+
+		logging.info("Importing UMAP")
+		table = pd.read_csv(path + "analysis/umap/gene_expression_2_components/projection.csv")
+		umap = np.zeros((n_cells, 2), dtype="float32")
+		for ix, cell_id in enumerate(ws.CellId[:]):
+			umap[ix, :] = table[table["Barcode"] == cell_id].iloc[:, 1:].values.flatten()
+		ws.UMAP = shoji.Tensor(dtype="float32", dims=("cells", 2), inits=umap)
+		
+		logging.info("Importing clustering")
+		table = pd.read_csv(path + "analysis/clustering/gene_expression_graphclust/clusters.csv")
+		clusters = np.zeros((n_cells,), dtype="uint32")
+		for ix, cell_id in enumerate(ws.CellId[:]):
+			clusters[ix] = table[table["Barcode"] == cell_id].iloc[:, 1].values.flatten()
+		ws.Clusters = shoji.Tensor(dtype="uint32", dims=("cells",), inits=clusters)
+		
+		logging.info("Importing expression matrix")
+		h5 = h5py.File(path + 'cell_feature_matrix.h5')
+		features = np.array([s.decode("utf-8") for s in h5["matrix/features/name"][:]], dtype="object")
+		ensembl_id = np.array([s.decode("utf-8") for s in h5["matrix/features/id"][:]], dtype="object")
+		feature_type = np.array([s.decode("utf-8") for s in h5["matrix/features/feature_type"][:]], dtype="object")
+
+		n_genes = features.shape[0]
+		ws.genes = shoji.Dimension(n_genes)
+
+		ws.Gene = shoji.Tensor(dtype="string", dims=("genes", ), inits=features)
+		ws.EnsemblId = shoji.Tensor(dtype="string", dims=("genes", ), inits=ensembl_id)
+		ws.FeatureType = shoji.Tensor(dtype="string", dims=("genes", ), inits=feature_type)
+
+		logging.info("Importing expression matrix")
+		shape = h5["matrix/shape"][:]
+		data = h5["matrix/data"][:]
+		indices = h5["matrix/indices"][:]
+		indptr = h5["matrix/indptr"][:]
+		barcodes = np.array([s.decode("utf-8") for s in h5["matrix/barcodes"][:]], dtype="object")
+		assert np.all(barcodes == ws.CellId[:])
+		
+		matrix = sparse.csc_matrix((data, indices, indptr), shape=shape).toarray().astype("uint16").T
+		ws.Expression = shoji.Tensor(dtype="uint16", dims=("cells", "genes"), inits=matrix)
+
+		
 	def _from_loom(self, f: str, fagg: str = None, verbose: bool = False) -> None:
 		"""
 		Load a loom file into a workspace
