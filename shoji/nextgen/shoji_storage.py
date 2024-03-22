@@ -1,75 +1,93 @@
 import h5py
 import numpy as np
-from typing import Tuple, Union, Iterator
-from .storage import Storage, Path, Dimension, Tensor
+from typing import Tuple, Union, Iterator, Optional, List, Any
+from .storage import Storage, Path, Dimension, Tensor, FancyIndices
 from pytypes import typechecked, override
+import fdb
+from ..io.enums import Compartment
+import pickle
 
+
+@fdb.transactional
+def delete_workspace(tr, root: Any, path: Path) -> None:
+	subdir = root.subspace(path.segments_())
+	tr.clear_range_startswith(subdir.key())
+
+@fdb.transactional
+def list_workspaces(tr, root: Any, path: Path) -> List[Path]:
+	subdir = root.subspace(path.segments_())
+	return [Path(p) for p in subdir.list(tr)]
+
+@fdb.transactional
+def create_dimension(tr, root: Any, path: Path, length: int) -> None:
+	path, name = path.split_()
+	subdir = root.subspace(path.segments_())
+	tr[subdir[Compartment.Dimensions][name]] = length.to_bytes(length=8, byteorder="big")
+
+@fdb.transactional
+def get_dimension(tr, root: Any, path: Path) -> int:
+	path, name = path.split_()
+	subdir = root.subspace(path.segments_())
+	length = tr[subdir[Compartment.Dimensions][name]]
+	if length.present():
+		return int.from_bytes(length, byteorder="big")
+	else:
+		raise KeyError(f"Dimension {path} does not exist")
+
+@fdb.transactional
+def list_dimensions(tr, root: Any, path: Path) -> Tuple[List[str], List[int]]:
+	path, name = path.split_()
+	subdir = root.subspace(path.segments_())
+	names = subdir[Compartment.Dimensions][name].list(tr)
+	lens = [get_dimension(name) for name in names]
+	return names, lens
+
+@fdb.transactional
+def delete_dimension(tr, root: Any, path: Path, name: str) -> None:
+	subdir = root.subspace(path.segments_())
+	tr.clear_range_startswith(subdir[Compartment.Dimensions][name].key())
 
 @typechecked
-class H5Storage(Storage):
-	def __init__(self, filename: str, mode: str) -> None:
+class ShojiStorage(Storage):
+	def __init__(self, cluster_file: Optional[str] = None, event_model = None, transaction_retry_limit = 1) -> None:
 		super().__init__()
-		self.h5 = h5py.File(filename, mode)
+		self.db = fdb.open(cluster_file=cluster_file, event_model=event_model)
+		self.db.transaction = self.db  # default to using the Database object for transactions
+		self.db.options.set_transaction_retry_limit(transaction_retry_limit)  # Retry every transaction only once if it doesn't go through
+		self.root = fdb.directory.create_or_open(self.db, ("shoji_nextgen",))
 
 	@override
 	def _create_workspace(self, path: Path) -> Path:
-		self.h5.create_group(str(path))
+		self.root.create(self.db.transaction, tuple(path.segments_()))
 		return path
 
 	@override
-	def _list_workspaces(self, path: Path) -> Iterator[Path]:
-		for item in self.h5[str(path)]:
-			fullpath = path / item
-			if isinstance(self.h5[str(fullpath)], h5py.Group):
-				yield fullpath
+	def _list_workspaces(self, path: Path) -> List[Path]:
+		return list_workspaces(self.root, path)
 
 	@override
 	def _delete_workspace(self, path: Path) -> None:
-		if str(path) not in self.h5 or not isinstance(self.h5[str(path)], h5py.Group):
-			raise ValueError(f"Workspace '{path}' does not exist")
-		del self.h5[str(path)]
+		delete_workspace(self.root, path)
 
 	@override
-	def _create_dimension(self, path: Path, shape: int) -> Dimension:
-		# Dimensions are stored as attributes on the Group, prefixed by "@dim"
-		parent = str(path.parent())
-		name = path.name_
-		if parent in self.h5 and isinstance(self.h5[parent], h5py.Group):
-			if "@dim" + name in self.h5[parent].attrs:
-				raise ValueError(f"Dimension '{name}' already exists in workspace '{parent}'")
-			self.h5[parent].attrs["@dim" + name] = shape
-			return Dimension(self, path, shape)
-		raise ValueError(f"Workspace '{parent}' does not exist")
+	def _create_dimension(self, path: Path, length: int) -> None:
+		create_dimension(self.root, path, length)
 
 	@override
 	def _get_dimension(self, path: Path) -> "Dimension":
 		parent = str(path.parent())
 		name = path.name_
-		if parent in self.h5 and isinstance(self.h5[parent], h5py.Group):
-			if "@dim" + name in self.h5[parent].attrs:
-				return Dimension(self, path, self.h5[parent].attrs["@dim" + name])
-			else:
-				raise ValueError(f"Dimension '{name}' does not exist in workspace '{parent}'")
-		raise ValueError(f"Workspace '{parent}' does not exist")
+		length = get_dimension(self.root, path)
+		return Dimension(self, parent, name, length)
 		
 	@override
-	def _list_dimensions(self, path: Path) -> Iterator[Dimension]:
-		if str(path) in self.h5 and isinstance(self.h5[str(path)], h5py.Group):
-			for attr in self.h5[str(path)].attrs.keys():
-				if attr.startswith("@dim"):
-					yield Dimension(self, path / attr[4:], self.h5[path].attrs[attr])
-		else:
-			raise ValueError(f"Workspace '{path}' does not exist")
+	def _list_dimensions(self, path: Path) -> List[Dimension]:
+		names, lens = list_dimensions(self.root, path)
+		return [Dimension(self, path, name, length) for (name, length) in zip(names, lens)]
 
 	@override
-	def _resize_dimension(self, path: Path, shape: int) -> Dimension:
-		parent = str(path.parent())
-		name = path.name_
-		if parent in self.h5 and isinstance(self.h5[parent], h5py.Group):
-			if "@dim" + name not in self.h5[parent].attrs:
-				raise ValueError(f"Dimension '{name}' does not exist in workspace '{parent}'")
-			self.h5[parent].attrs["@dim" + name] = shape
-		raise ValueError(f"Workspace '{parent}' does not exist")
+	def _resize_dimension(self, path: Path, length: int) -> Dimension:
+		return self._create_dimension(path, length)
 
 	@override
 	def _delete_dimension(self, path: Path) -> None:

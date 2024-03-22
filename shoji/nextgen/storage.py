@@ -14,14 +14,19 @@ class Path:
 	"""
 	Represents an absolute path attached to a Storage, but where the path may or may not actually correspond to an entity in the Storage
 	"""
-	def __init__(self, storage: "Storage", path: Union[str, "Path"]) -> None:
+	def __init__(self, storage: "Storage", path: Union[str, "Path", tuple, list]) -> None:
 		self.storage = storage
 		self._pathstring: str = ""
 		if isinstance(path, Path):
 			self._pathstring = path._pathstring
+		elif isinstance(path, tuple) or isinstance(path, list):
+			self._pathstring = "/" + "/".join(path)
 		else:
 			self._pathstring = path  # Now this must be a string
 		self._ensure_legal_absolute_path(self._pathstring)
+
+	def isroot(self):
+		return self._pathstring == "/"
 
 	def _ensure_legal_absolute_path(self, path) -> None:
 		if "//" in path:
@@ -46,6 +51,10 @@ class Path:
 	def segments_(self) -> List[str]:
 		return list(filter(None, self._pathstring.split("/")))
 
+	def split_(self) -> Tuple["Path", str]:
+		temp = self.segments_()
+		return (Path(temp[:-1]), temp[-1])
+	
 	def parent_(self) -> "Path":
 		segments = self.segments_()
 		if len(segments) > 0:
@@ -157,17 +166,17 @@ class Storage(ABC):
 		return self._get_entity_type(path)
 
 	# Must override in concrete implementation, to perform the actual work of creating a dimension
-	# When called, path and name are valid but workspace or its parents may not exist
-	# If dimension already exists, an exception should be raised
+	# When called, the path is valid but the dimension, workspace or its parents may not exist
+	# If dimension already exists, its length should be updated
 	@abstractmethod
-	def _create_dimension(self, path: Path, length: int) -> "Dimension":
+	def _create_dimension(self, path: Path, length: int) -> None:
 		pass
 
-	def create_dimension(self, path: Union[str, Path], length: int) -> "Dimension":
+	def create_dimension(self, path: Union[str, Path], length: int) -> None:
 		path = Path(self, path)
 		if length < 0:
-			raise ValueError(f"Shape {length} of dimension '{path.name_}' cannot be negative")
-		return self._create_dimension(path, length)
+			raise ValueError(f"Length {length} of dimension '{path.name_}' cannot be negative")
+		self._create_dimension(path, length)
 
 	# Must override in concrete implementation, to perform the actual work of getting a dimension
 	# When called, path and name are valid but workspace or its parents may not exist
