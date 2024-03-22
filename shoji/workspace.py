@@ -293,7 +293,7 @@ class WorkspaceManager:
 	def __delitem__(self, name: str) -> None:
 		shoji.io.delete_entity(self._db.transaction, self, name)
 
-	def from_xenium(self, path):
+	def _from_xenium(self, path):
 		ws = self
 
 		logging.info("Importing experiment metadata (scalars)")
@@ -398,7 +398,7 @@ class WorkspaceManager:
 		matrix = sparse.csc_matrix((data, indices, indptr), shape=shape).toarray().astype("uint16").T
 		ws.Expression = shoji.Tensor(dtype="uint16", dims=("cells", "genes"), inits=matrix)
 
-		
+
 	def _from_loom(self, f: str, fagg: str = None, verbose: bool = False) -> None:
 		"""
 		Load a loom file into a workspace
