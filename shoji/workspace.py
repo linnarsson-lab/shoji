@@ -365,8 +365,11 @@ class WorkspaceManager:
 		umap = np.zeros((n_cells, 2), dtype="float32")
 		for ix, cell_id in enumerate(ws.CellId[:]):
 			umap[ix, :] = table[table["Barcode"] == cell_id].iloc[:, 1:].values.flatten()
-		ws.UMAP = shoji.Tensor(dtype="float32", dims=("cells", 2), inits=umap)
-		
+		try:
+			ws.UMAP = shoji.Tensor(dtype="float32", dims=("cells", 2), inits=umap)
+		except Exception as e:
+			logging.error("Failed to import UMAP (no CellIDs matched?)")
+
 		logging.info("Importing clustering")
 		table = pd.read_csv(path + "analysis/clustering/gene_expression_graphclust/clusters.csv")
 		clusters = np.zeros((n_cells,), dtype="uint32")
@@ -374,7 +377,7 @@ class WorkspaceManager:
 			clusters[ix] = table[table["Barcode"] == cell_id].iloc[:, 1].values.flatten()
 		ws.Clusters = shoji.Tensor(dtype="uint32", dims=("cells",), inits=clusters)
 		
-		logging.info("Importing expression matrix")
+		logging.info("Importing genes metadata")
 		h5 = h5py.File(path + 'cell_feature_matrix.h5')
 		features = np.array([s.decode("utf-8") for s in h5["matrix/features/name"][:]], dtype="object")
 		ensembl_id = np.array([s.decode("utf-8") for s in h5["matrix/features/id"][:]], dtype="object")
