@@ -364,11 +364,10 @@ class WorkspaceManager:
 		table = pd.read_csv(path + "analysis/umap/gene_expression_2_components/projection.csv")
 		umap = np.zeros((n_cells, 2), dtype="float32")
 		for ix, cell_id in enumerate(ws.CellId[:]):
-			umap[ix, :] = table[table["Barcode"] == cell_id].iloc[:, 1:].values.flatten()
-		try:
+			vals = table[table["Barcode"] == cell_id].iloc[:, 1:].values.flatten()
+			if vals.shape == (2,):
+				umap[ix, :] = vals
 			ws.UMAP = shoji.Tensor(dtype="float32", dims=("cells", 2), inits=umap)
-		except Exception as e:
-			logging.error("Failed to import UMAP (no CellIDs matched?)")
 
 		logging.info("Importing clustering")
 		table = pd.read_csv(path + "analysis/clustering/gene_expression_graphclust/clusters.csv")
