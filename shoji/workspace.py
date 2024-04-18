@@ -373,7 +373,9 @@ class WorkspaceManager:
 		table = pd.read_csv(path + "analysis/clustering/gene_expression_graphclust/clusters.csv")
 		clusters = np.zeros((n_cells,), dtype="uint32")
 		for ix, cell_id in enumerate(ws.CellId[:]):
-			clusters[ix] = table[table["Barcode"] == cell_id].iloc[:, 1].values.flatten()
+			vals = table[table["Barcode"] == cell_id].iloc[:, 1].values.flatten()
+			if vals.shape == (2,):
+				clusters[ix] = vals
 		ws.Clusters = shoji.Tensor(dtype="uint32", dims=("cells",), inits=clusters)
 		
 		logging.info("Importing genes metadata")
