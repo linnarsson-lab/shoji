@@ -116,7 +116,7 @@ pip install shoji
 
 ### Getting started with example data
 
-Walk through the `GettingStarted_Shoji.ipynb` Jupyter notebook in the `/notebooks` directory of the Shoji repository. It demonstrates how to import an .h5ad file and plot some data.
+Walk through the [GettingStarted_Shoji.ipynb](https://github.com/linnarsson-lab/shoji/blob/master/notebooks/GettingStarted_Shoji.ipynb) Jupyter notebook in the `/notebooks` directory of the Shoji repository. It demonstrates how to import an .h5ad file and plot some data.
 
 ### Where is everything?
 
