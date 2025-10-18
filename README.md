@@ -54,6 +54,9 @@ FoundationDB is optimized to run on SSDs. Running on mechanical disks is discour
 
 For more details about these and some other limitations, see the FoundationDB docs
 
+### Documentation
+
+[API Reference](http://linnarssonlab.org/shoji/)
 
 
 # Installing Shoji on MacOS
