@@ -1,7 +1,7 @@
 import scanpy as sc
 import numpy as np
 from typing import Tuple, Union, Iterator
-from .storage import Storage, Path, Dimension, Tensor
+from .storage import Storage, Path, Dimension, Tensor, FancyIndices
 from pytypes import typechecked, override
 
 
@@ -62,6 +62,8 @@ class AnnDataStorage(Storage):
 	@override
 	def _create_tensor(self, path: Path, dtype: str, dims: Tuple[Union[int, str], ...], *, chunks: Tuple[int, ...] = None, allow_index: bool = True) -> Tensor:
 		parent = path.parent()
+		if not parent.isroot():
+			raise NotImplementedError("Workspaces are not supported in .h5ad storage")
 
 		shape = []
 		for dim in dims:

@@ -1,4 +1,5 @@
-    💡 This is an early preview version, subject to breaking changes. 
+    💡 Nobody is actively developing or supporting Shoji. It was created for internal use in the Linnarsson Lab at Karolinska Institutet, Sweden. It is provided here as-is for your enjoyment.
+
 
 # Shoji
 
@@ -52,46 +53,12 @@ FoundationDB is optimized to run on SSDs. Running on mechanical disks is discour
 
 For more details about these and some other limitations, see the FoundationDB docs
 
-# Getting started with Shoji
 
-Shoji requires Python 3.7+ (we recommend Anaconda)
 
-First, install the FoundationDb client:
-
-1. [Download FoundationDB](https://apple.github.io/foundationdb/downloads.html)
-2. Double-click on FoundationDB-6.#.##.pkg and follow the instructions
-    
-    <aside>
-    💡 If you get a security error (“FoundationDB-6.2.27.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
-    
-    </aside>
-    
-Next, in your terminal, install the foundationdb and shoji Python packages:
-
-```
-$ pip install foundationdb
-$ git clone https://github.com/linnarsson-lab/shoji.git
-$ pip install -e shoji
-```
-
-Check that you can now connect to the database:
-
-```python
-import shoji
-db = shoji.connect()
-db
-```
-
-Typing db alone at the last line above should return a representation of the contents of the database (which might be empty at this point).
-
-## Documentation
-
-Clone the repository, and then go to the `shoji/html` folder to browse the docs.
-
-# Setting up a Shoji database on macOS
+# Installing Shoji on MacOS
 
 <aside>
-❗ This page is for setting up a new Shoji database. If you're just going to use an existing Shoji database, e.g. on monod, there is no need to set up FoundationDB or Shoji locally.
+❗ This page shows how to install the client and set up a new Shoji database on MacOS. If you're just going to connect to an existing Shoji database, there is no need to set up FoundationDB locally. Pay attention below and just skip the steps related to the server.
 
 </aside>
 
@@ -99,25 +66,49 @@ Clone the repository, and then go to the `shoji/html` folder to browse the docs.
 
 Shoji is based on FoundationDB. You can easily set up a local Shoji database by following these instructions:
 
-1. [Download FoundationDB](https://apple.github.io/foundationdb/downloads.html)
-2. Double-click on FoundationDB-6.#.##.pkg and follow the instructions
-    
-    <aside>
-    💡 If you get a security error (“FoundationDB-6.2.27.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
-    
-    </aside>
-    
-3. In your Terminal, type `fdbcli` and then `status` to confirm that the database is up and running
-4. Still in `fdbcli`, type `configure ssd` to change the storage engine to ssd-2 
-5. After a few minutes, `status` should again show as `Healthy`
+**Download the installer** from the [FoundationDB release page](https://github.com/apple/foundationdb/releases)
+
+Get a stable release, e.g. FoundationDB-7.3.69_arm64.pkg.
+
+<aside>
+💡 If you are using a Mac with Apple Silicon CPU (e.g. M1, M2, etc.) you should install from an **amd64** build, otherwise use an **x86** build.
+
+</aside>
+
+<aside>
+⛔
+
+Do not download the installer from the [official downloads page](https://apple.github.io/foundationdb/downloads.html). It is very old and will not work on Apple Silicon.
+
+</aside>
+
+**Double-click on FoundationDB-7.3.69.pkg** and follow the instructions.
+
+<aside>
+💡 If you get a security error (“FoundationDB-7.3.69_arm64.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
+
+</aside>
+
+If you want to use a local server on your Mac, install both the server and the client. If you want to connect to a remote server, install only the client.
+
+**Confirm that your installation was successful:**
+
+1. In your Terminal, type `fdbcli` and then `status` to confirm that the database is up and running
+2. Still in `fdbcli`, type `configure ssd` to change the storage engine to ssd-2 (otherwise, FoundationDb will use an in-memory database)
+3. After a few minutes, `status` should again show as `Healthy`
 
 ### Install the Python libraries
 
+<aside>
+⚠️
+
+**Important**: the client and server major and minor versions must match the major and minor version of the Python library. If you installed FoundationDB 7.3.xx above, you should install the most recent Python library in the 7.3.x series, but not anything in the 7.4.x series.
+
+</aside>
+
 ```bash
-pip install -U foundationdb
-git clone https://github.com/linnarsson-lab/shoji.git
-cd shoji
-pip install -e .
+pip install "foundationdb>=7.3.0,<7.4.0" ## Most recent version in the 7.3 series
+pip install shoji
 ```
 
 ### Verify the installation
@@ -128,6 +119,10 @@ pip install -e .
 >>> db
 (root) (shoji.Workspace)
 ```
+
+### Getting started with example data
+
+Walk through the `GettingStarted_Shoji.ipynb` Jupyter notebook in the `/notebooks` directory of the Shoji repository. It demonstrates how to import an .h5ad file and plot some data.
 
 ### Where is everything?
 

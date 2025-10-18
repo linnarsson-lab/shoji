@@ -318,7 +318,7 @@ class WorkspaceManager:
 			if isinstance(vals[0], bytes):
 				vals = np.array([x.decode("utf8") for x in vals.flat], dtype=object)
 			name = cells.column_names[j]
-			logging.info(f"  Importing '{name}")
+			logging.info(f"  Importing '{name}'")
 			segments = [x[0].upper() + x[1:] for x in name.split("_")]
 			name = "".join(segments)
 			nptype = str(vals.dtype)

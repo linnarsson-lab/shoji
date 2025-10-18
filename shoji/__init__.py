@@ -162,14 +162,44 @@ are the only way to read and write data in shoji.
 Perform complex database operations atomically.
 
 """
+import os
 import fdb
-try:
-    fdb.api_version(720)
-except RuntimeError:
+
+_env_api_version = os.environ.get("SHOJI_FDB_API_VERSION")
+
+if _env_api_version is not None:
     try:
-        fdb.api_version(630)
-    except RuntimeError:
-        fdb.api_version(620)
+        _candidate_versions = [int(_env_api_version)]
+    except ValueError as exc:
+        raise RuntimeError(
+            "Environment variable SHOJI_FDB_API_VERSION must be an integer"
+        ) from exc
+else:
+    _max_version_getter = getattr(fdb, "get_max_api_version", None)
+    if callable(_max_version_getter):
+        _candidate_versions = [_max_version_getter()]
+        for _fallback_version in (720, 630, 620):
+            if _fallback_version not in _candidate_versions:
+                _candidate_versions.append(_fallback_version)
+    else:
+        _candidate_versions = [720, 630, 620]
+
+_api_version_error = None
+for _api_version in _candidate_versions:
+    try:
+        fdb.api_version(_api_version)
+    except RuntimeError as exc:
+        _api_version_error = exc
+    else:
+        _api_version_error = None
+        break
+
+if _api_version_error is not None:
+    if _env_api_version is not None:
+        raise RuntimeError(
+            f"Failed to set FoundationDB API version {_candidate_versions[0]} from environment"
+        ) from _api_version_error
+    raise RuntimeError("Failed to set FoundationDB API version automatically") from _api_version_error
 
 from .dimension import Dimension
 from .tensor import Tensor, TensorValue
