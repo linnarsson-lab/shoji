@@ -113,7 +113,7 @@ pip install "foundationdb>=7.3.0,<7.4.0" ## Most recent version in the 7.3 serie
 Clone the repository and install it locally using pip:
 
 ```bash
-git clone git@github.com:linnarsson-lab/shoji.git  # Clone using SSH; go to the GitHub repo if you want to clone using HTTP
+git clone git@github.com:linnarsson-lab/shoji.git  # Clone using SSH; use https://github.com/linnarsson-lab/shoji.git to clone via HTTPS
 pip install -e shoji
 ```
 
