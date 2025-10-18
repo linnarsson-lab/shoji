@@ -80,7 +80,6 @@ Get a stable release, e.g. FoundationDB-7.3.69_arm64.pkg.
 > [!CAUTION]
 > Do not download the installer from the [official downloads page](https://apple.github.io/foundationdb/downloads.html). It is very old and will not work on Apple Silicon.
 
-</aside>
 
 **Double-click on FoundationDB-7.3.69.pkg** and follow the instructions.
 
@@ -104,7 +103,18 @@ In your Terminal, type `fdbcli` and then `status` to confirm that the database i
 
 ```bash
 pip install "foundationdb>=7.3.0,<7.4.0" ## Most recent version in the 7.3 series
-pip install shoji
+```
+
+### Install Shoji
+
+> [!IMPORTANT]
+> Do not attempt to `pip install shoji`. That's a completely unrelated library. Our Shoji is not in pip.
+
+Clone the repository and install it locally using pip:
+
+```bash
+git clone git@github.com:linnarsson-lab/shoji.git  # Clone using SSH; go to the GitHub repo if you want to clone using HTTP
+pip install -e shoji
 ```
 
 ### Verify the installation
