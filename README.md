@@ -91,9 +91,11 @@ If you want to use a local server on your Mac, install both the server and the c
 
 **Confirm that your installation was successful:**
 
-1. In your Terminal, type `fdbcli` and then `status` to confirm that the database is up and running
-2. Still in `fdbcli`, type `configure ssd` to change the storage engine to ssd-2 (otherwise, FoundationDb will use an in-memory database)
-3. After a few minutes, `status` should again show as `Healthy`
+In your Terminal, type `fdbcli` and then `status` to confirm that the database is up and running
+
+**Change to store the data on disk**
+1. Still in `fdbcli`, type `configure ssd` to change the storage engine to ssd-2 (otherwise, FoundationDb will use an in-memory database)
+2. After a few minutes, `status` should again show as `Healthy`
 
 ### Install the Python libraries
 
@@ -106,6 +108,7 @@ pip install shoji
 ```
 
 ### Verify the installation
+Run this code in a Python interpreter or Jupyter notebook:
 
 ```python
 >>> import shoji
@@ -114,7 +117,7 @@ pip install shoji
 (root) (shoji.Workspace)
 ```
 
-### Getting started with example data
+### What's next? Get started with example data
 
 Walk through the [GettingStarted_Shoji.ipynb](https://github.com/linnarsson-lab/shoji/blob/master/notebooks/GettingStarted_Shoji.ipynb) Jupyter notebook in the `/notebooks` directory of the Shoji repository. It demonstrates how to import an .h5ad file and plot some data.
 
