@@ -1,5 +1,5 @@
-    💡 Nobody is actively developing or supporting Shoji. It was created for internal use in 
-       the Linnarsson Lab at Karolinska Institutet, Sweden. It is provided here as-is for your enjoyment.
+> [!IMPORTANT]
+> Nobody is actively developing or supporting Shoji. It was created for internal use in the Linnarsson Lab at Karolinska Institutet, Sweden. It is provided here as-is for your enjoyment.
 
 
 # Shoji
@@ -58,10 +58,12 @@ For more details about these and some other limitations, see the FoundationDB do
 
 # Installing Shoji on MacOS
 
-<aside>
-❗ This page shows how to install the client and set up a new Shoji database on MacOS. If you're just going to connect to an existing Shoji database, there is no need to set up FoundationDB locally. Pay attention below and just skip the steps related to the server.
+> [!NOTE]
+> This page shows how to install the client and set up a new Shoji database on MacOS. If you're just going to connect to an existing Shoji database, there is no need to set up FoundationDB locally. Pay attention below and just skip the steps related to the server.
 
-</aside>
+> [!WARNING]
+> FoundationDB on MacOS is intended only as a playground, but lacks data replication and **is not failure tolerant**. For a production environment, FoundationDB and Shoji should be installed on a Linux server. For best reliability and performance, configure multiple machines and one process per core per machine. See the FoundationDB [Administration Guide](https://apple.github.io/foundationdb/administration.html) to get started.
+
 
 ### Install FoundationDB
 
@@ -71,24 +73,19 @@ Shoji is based on FoundationDB. You can easily set up a local Shoji database by 
 
 Get a stable release, e.g. FoundationDB-7.3.69_arm64.pkg.
 
-<aside>
-💡 If you are using a Mac with Apple Silicon CPU (e.g. M1, M2, etc.) you should install from an **amd64** build, otherwise use an **x86** build.
+> [!NOTE]
+> If you are using a Mac with Apple Silicon CPU (e.g. M1, M2, etc.) you should install from an **amd64** build, otherwise use an **x86** build.
 
-</aside>
 
-<aside>
-⛔
-
-Do not download the installer from the [official downloads page](https://apple.github.io/foundationdb/downloads.html). It is very old and will not work on Apple Silicon.
+> [!CAUTION]
+> Do not download the installer from the [official downloads page](https://apple.github.io/foundationdb/downloads.html). It is very old and will not work on Apple Silicon.
 
 </aside>
 
 **Double-click on FoundationDB-7.3.69.pkg** and follow the instructions.
 
-<aside>
-💡 If you get a security error (“FoundationDB-7.3.69_arm64.pkg” cannot be opened because it is from an unidentified developer) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
-
-</aside>
+> [!TIP]
+> If you get a security error (e.g. *“FoundationDB-7.3.69_arm64.pkg cannot be opened because it is from an unidentified developer"*) go to Settings → Security & Privacy → General and click on Open Anyway and then on Open (in the dialog).
 
 If you want to use a local server on your Mac, install both the server and the client. If you want to connect to a remote server, install only the client.
 
@@ -100,12 +97,8 @@ If you want to use a local server on your Mac, install both the server and the c
 
 ### Install the Python libraries
 
-<aside>
-⚠️
-
-**Important**: the client and server major and minor versions must match the major and minor version of the Python library. If you installed FoundationDB 7.3.xx above, you should install the most recent Python library in the 7.3.x series, but not anything in the 7.4.x series.
-
-</aside>
+> [!IMPORTANT]
+> The client and server major and minor versions must match the major and minor version of the Python library. If you installed FoundationDB 7.3.xx above, you should install the most recent Python library in the 7.3.x series, but not anything in the 7.4.x series.
 
 ```bash
 pip install "foundationdb>=7.3.0,<7.4.0" ## Most recent version in the 7.3 series
@@ -127,7 +120,7 @@ Walk through the `GettingStarted_Shoji.ipynb` Jupyter notebook in the `/notebook
 
 ### Where is everything?
 
-Documentation: `shoji/html/shoji/index.html`
+Documentation: `shoji/html/shoji/index.html` (in this repository)
 
 FDB cluster file: `/usr/local/etc/foundationdb/fdb.cluster`
 
