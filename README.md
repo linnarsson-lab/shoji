@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-> Nobody is actively developing or supporting Shoji. It was created for internal use in the Linnarsson Lab at Karolinska Institutet, Sweden. It is provided here as-is for your enjoyment.
+> Nobody is actively developing or supporting Shoji. It was created by Sten Linnarsson for internal use in the Linnarsson Lab at Karolinska Institutet, Sweden. It is provided here as-is for your enjoyment.
 
 
 # Shoji
